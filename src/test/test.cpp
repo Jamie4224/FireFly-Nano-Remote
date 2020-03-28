@@ -82,7 +82,7 @@ void loop() {
 */
 
 
-
+/**
 #include <Arduino.h>
 #include "CPU.h"
 #include "utils.h"
@@ -124,4 +124,98 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   delay(2000);
+}
+
+**/
+
+#include <Arduino.h>
+#include "CPU.h"
+#include "utils.h"
+#include "VescUart.h"
+#include "test.h"
+#include "datatypes.h"
+
+HardwareSerial MySerial(1);
+
+mc_configuration motorConfigPackage;
+bldcMeasure bldc;
+
+void setup() {
+  delay(1000);
+  pinMode(LED, OUTPUT);
+
+   //Serial.begin(9600);
+
+  SetSerialPort(&MySerial);
+      // Comment this line for debugging without VESC
+  MySerial.begin(115200, SERIAL_8N1, RX, TX);
+ 
+
+
+  delay(1000);
+
+  test();
+
+}
+
+bool test()   {
+  if(!VescUartGet(motorConfigPackage)) {
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    return false;
+  }
+
+
+  delay(100);
+  motorConfigPackage.l_max_erpm = 34400.00;
+  
+  if(!VescUartSet(motorConfigPackage)){
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    return false;
+  }
+
+  digitalWrite(LED, HIGH);
+    delay(1000);
+    digitalWrite(LED, LOW);
+}
+
+void loop() {
+  //test();
+
+  delay(5000);
+  if(VescUartGet(bldc)){
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    if(bldc.inpVoltage > 30.0){
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    delay(200);
+    digitalWrite(LED, HIGH);
+    delay(200);
+    digitalWrite(LED, LOW);
+    Serial.write((int) bldc.inpVoltage);
+    }
+  }
 }

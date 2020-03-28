@@ -41,7 +41,7 @@ void loop() {
   if (VescUartGet(mcVal)) {
     Serial.println("Successfully read mc-config.");
     SerialPrint(mcVal);
-    delay(100);
+    
     
     mcVal.l_max_erpm = 34400.00;
 

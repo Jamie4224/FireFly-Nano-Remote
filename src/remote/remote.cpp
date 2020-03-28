@@ -565,18 +565,6 @@ void loadSettings() {
 
     loadBoards();
     selectBoard(currentBoard);
-
-  #elif ARDUINO_SAMD_ZERO
-
-    settings = flash_settings.read();
-
-    if (settings.valid == false) {
-      settings.minHallValue = MIN_HALL;
-      settings.centerHallValue = CENTER_HALL;
-      settings.maxHallValue = MAX_HALL;
-      debug("defaults loaded");
-    }
-
   #endif
 
   remPacket.version = VERSION;
@@ -598,11 +586,6 @@ void saveSettings() {
     preferences.end();
 
     settings.needSave = false;
-
-  #elif ARDUINO_SAMD_ZERO
-
-    settings.valid = true;
-    flash_settings.write(settings);
 
   #endif
 }
@@ -706,7 +689,6 @@ bool receiveData() {
   // receive a packet and check crc
   if (!receivePacket(buf, len)) return false;
 
-
   // parse header
   memcpy(&recvPacket, buf, sizeof(recvPacket));
   if (recvPacket.chain != remPacket.counter) {
@@ -744,6 +726,7 @@ bool receiveData() {
       
 
       
+      /* Sending 3 Char Profile names
       MENUS[MENU_PROFILE][1] = "CRAP";
 
       // Working! 
@@ -753,18 +736,7 @@ bool receiveData() {
       SerializeInt32(test, it);
       MENUS[MENU_PROFILE][1] = String(test);
       
-
-      
-
-      
-      
-
-
-      //MENUS[MENU_PROFILE][2] = (String) (char*) (uint8_t*)boardConfig.nameProfile2; 
-      //MENUS[MENU_PROFILE][3] = (String) (char*) (uint8_t*)boardConfig.nameProfile3; 
-      //MENUS[MENU_PROFILE][4] = (String) (char*) (uint8_t*)boardConfig.nameProfile4; 
-      //MENUS[MENU_PROFILE][5] = boardConfig.nameProfile5; 
-      //debug(String(boardConfig.nameProfile1));
+      */
 
       needConfig = false;
       return true;
@@ -871,14 +843,12 @@ void prepatePacket() {
     remPacket.command = SET_THROTTLE;
     remPacket.data = round(throttle);
     break;
-    
 
   case MENU:
-    if (requestUpdate) {
-      debug("requestUpdate");
-      remPacket.command = SET_STATE;
-      remPacket.data = UPDATE;
-      requestUpdate = false;
+    if(altCmd.needed) {
+      remPacket.command = altCmd.command;
+      remPacket.data = altCmd.data;
+      altCmd.needed = false;
     } else {
       remPacket.command = SET_THROTTLE;
       remPacket.data = default_throttle;
@@ -939,7 +909,6 @@ void transmitToReceiver() {
       default: // connected
         debug("Disconnected");
         state = CONNECTING;
-        //needConfig = true;
         vibrate(100);
     }
   }
@@ -1138,7 +1107,12 @@ void updateMainDisplay()
 
       switch (page) {
         case PAGE_MAIN:
-          drawBatteryLevel(); // 2 ms
+          if(speed() > 3 ){
+            drawBatteryLevel(); // 2 ms
+          } else {
+            drawModeProfile();
+          }
+           
           drawMode();
           drawSignal(); // 1 ms
           drawMainPage();
@@ -1635,14 +1609,31 @@ void drawSettingsMenu() {
           break;
         case MENU_BOARD:
           switch (subMenuItem) {
+            case BOARD_OFF:
+              altCmd.needed = true;
+              altCmd.command = SET_BOARD_SHUTDOWN;
+              altCmd.data = 0;
+              backToMainMenu();
+              break;
             case BOARD_UPDATE:
-              requestUpdate = true;
+              altCmd.needed = true;
+              altCmd.command = SET_STATE;
+              altCmd.data = UPDATE;
               backToMainMenu();
               break;
           }
           break;
+        case MENU_MODE:
+          break;
+        case MENU_PROFILE:
+          altCmd.needed = true;
+          altCmd.command = SET_PROFILE;
+          altCmd.data = subMenuItem;
+          backToMainMenu();
+          break;
       }
     }
+
     break;
 
   case MENU_ITEM:
@@ -1799,12 +1790,12 @@ void drawExtPage() {
 
   // motor current
   x += gap;
-  bars = map(telemetry.getMotorCurrent(), MOTOR_MIN, MOTOR_MAX, -10, 10);
+  bars = map(telemetry.getMotorCurrent(), boardConfig.getMotorCurrentBrake() * -1, boardConfig.getMotorCurrentMax(), -10, 10);
   drawBars(x, y, bars, "M", String(telemetry.getMotorCurrent(),0));
 
   // battery current
   x += gap;
-  bars = map(telemetry.getInputCurrent(), BATTERY_MIN, BATTERY_MAX, -10, 10);
+  bars = map(telemetry.getInputCurrent(), boardConfig.getBatteryCurrentMaxRegen() * -1, boardConfig.getBatteryCurrentMax(), -10, 10);
   drawBars(x, y, bars, "B", String(telemetry.getInputCurrent(), 0) );
 
   // FET & motor temperature
@@ -2023,7 +2014,29 @@ void drawBatteryLevel() {
   if (batteryLevel <= 19) { // < 10%
     drawString(String(batteryLevel), x + 7, y + 6, fontMicro);
   }
+}
 
+void drawModeProfile() {
+  int x = 2;
+  int y = 2;
+
+  String m = "?";
+
+  switch (recvPacket.mode) {
+
+  case 0:
+    m = "N";
+    break;
+
+  case 1:
+    m = "P";
+    break;
+  }
+
+  uint8_t profile = recvPacket.profile + 1;
+
+  // top center
+  drawString(m += String(profile), x + 5, y + 8, fontPico);
 }
 
 int checkButton() {
@@ -2109,13 +2122,4 @@ void debug(String x) {
   if (settings.debugMode) {
     Serial.println(x);
   }
-}
-
-void SerializeInt32(char (&buf)[4], int32_t val)
-{
-    uint32_t uval = val;
-    buf[0] = uval;
-    buf[1] = uval >> 8;
-    buf[2] = uval >> 16;
-    buf[3] = uval >> 24;
 }

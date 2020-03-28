@@ -58,7 +58,7 @@ If you want to use debug, uncomment DEBUGSERIAL and define a port.*/
 //#endif
 
 #if defined(ARDUINO) && ARDUINO >= 100
-#include "Arduino.h"
+#include "arduino.h"
 #else
 #include "WProgram.h"
 #endif

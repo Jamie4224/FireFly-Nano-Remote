@@ -60,6 +60,12 @@ enum calibration_stage {
   CALIBRATE_STOP
 } calibrationStage;
 
+struct alternativeCommand {
+  bool needed = false;
+  uint8_t command;
+  uint8_t data;
+} altCmd;
+
 // Data structures
 ReceiverPacket recvPacket;
 RemotePacket remPacket;
@@ -94,6 +100,8 @@ const float maxVoltage = 4.2;
 const float refVoltage = 3.3; // Feather double-100K resistor divider
 
 unsigned long lastBatterySample = 0; // smooth remote voltage
+unsigned long batteryLevelMillis = 0;
+bool batteryModeProfileSwitch = true;
 
 // Hall Effect throttle
 uint16_t hallValue;
@@ -165,12 +173,12 @@ int selectedBoardSlot = 0;
 const byte subMenus = 21;
 const byte mainMenus = 5;
 
-byte subMenusCount[mainMenus] = {3, 2, 4, 2, 5};
+byte subMenusCount[mainMenus] = {3, 2, 5, 2, 5};
 
 String MENUS[mainMenus][subMenus] = {
     { "Info", "Odometer", "Telemetry", "Debug", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
     { "Remote", "Deselect", "Calibrate", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""},
-    { "Board", "Info",  "Update", "WiFi On", "WiFi Off", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
+    { "Board", "Turn off", "Info",  "Update", "WiFi On", "WiFi Off", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
     { "Mode", "Normal",  "Push", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
     { "Profile", "Profile 1",  "Profile 2", "Profile 3", "Profile 4", "Profile 5", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" }
   };
@@ -180,7 +188,7 @@ String MENUS[mainMenus][subMenus] = {
 enum menu_main { MENU_INFO, MENU_REMOTE, MENU_BOARD, MENU_MODE, MENU_PROFILE };
 enum menu_info { INFO_ODOMETER, INFO_TELEMETRY, INFO_DEBUG };
 enum menu_remote { REMOTE_DISCONNECT, REMOTE_CALIBRATE };
-enum menu_board { BOARD_INFO, BOARD_UPDATE, BOARD_WIFI_ON, BOARD_WIFI_OFF };
+enum menu_board { BOARD_OFF, BOARD_INFO, BOARD_UPDATE, BOARD_WIFI_ON, BOARD_WIFI_OFF };
 enum menu_mode { MODE_NORMAL, MODE_PUSH };
 enum menu_profile { PROFILE_1, PROFILE_2, PROFILE_3, PROFILE_4, PROFILE_5 };
 
@@ -271,6 +279,7 @@ void checkBatteryLevel();
 void coreTask(void * pvParameters );
 int cruiseControl();
 void drawBatteryLevel();
+void drawModeProfile();
 void drawConnectingScreen();
 void drawMode();
 void drawMainPage();
@@ -316,5 +325,3 @@ void saveBoard(int board, uint32_t address);
 void deleteBoard(int board);
 void selectBoard(int board);
 void debug(String x);
-
-void SerializeInt32(char (&buf)[4], int32_t val);

@@ -139,7 +139,6 @@ typedef enum {
 	CONTROL_MODE_OPENLOOP_DUTY_PHASE,	
 	CONTROL_MODE_NONE	
 } mc_control_mode;
-
 typedef enum {
 	DISP_POS_MODE_NONE = 0,
 	DISP_POS_MODE_INDUCTANCE,
@@ -275,13 +274,6 @@ typedef struct {
 	float foc_encoder_offset;
 	bool foc_encoder_inverted;
 	float foc_encoder_ratio;
-
-	float foc_encoder_sin_offset;	
-	float foc_encoder_sin_gain;	
-	float foc_encoder_cos_offset;	
-	float foc_encoder_cos_gain;	
-	float foc_encoder_sincos_filter_constant;
-
 	float foc_motor_l;
 	float foc_motor_r;
 	float foc_motor_flux_linkage;
@@ -306,17 +298,6 @@ typedef struct {
 	float foc_temp_comp_base_temp;
 	float foc_current_filter_const;
   // GPDrive      //NEW
-
-	uint8_t foc_cc_decoupling;	
-	uint8_t foc_observer_type;	
-	float foc_hfi_voltage_start;	
-	float foc_hfi_voltage_run;	
-	float foc_hfi_voltage_max;	
-	float foc_sl_erpm_hfi;	
-	uint16_t foc_hfi_start_samples;	
-	float foc_hfi_obs_ovr_sec;	
-	uint8_t foc_hfi_samples;
-
 	int gpd_buffer_notify_left;
 	int gpd_buffer_interpol;
 	float gpd_current_filter_const;
@@ -354,8 +335,6 @@ typedef struct {
 	float m_dc_f_sw;
 	float m_ntc_motor_beta;
 	out_aux_mode m_out_aux_mode;
-	uint8_t m_motor_temp_sens_type;	
-	float m_ptc_motor_coeff;
   // Setup info   //NEW
 	uint8_t si_motor_poles;
 	float si_gear_ratio;

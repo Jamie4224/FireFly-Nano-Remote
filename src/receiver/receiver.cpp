@@ -1,34 +1,33 @@
 #include "receiver.h"
 
 #ifdef ARDUINO_SAMD_FEATHER_M0 // Feather M0 w/Radio
-  #include <RH_RF69.h>
+#include <RH_RF69.h>
 
-  // Singleton instance of the radio driver
-  RH_RF69 radio(RF_CS, RF_DI0);
+// Singleton instance of the radio driver
+RH_RF69 radio(RF_CS, RF_DI0);
 
 #elif ESP32
-  #include <LoRa.h>
+#include <LoRa.h>
 
-  // OTA
-  #include <SPI.h>
-  #include <ESPmDNS.h>
-  #include <ArduinoOTA.h>
-  #include "wifi_credentials.h"
+// OTA
+#include <SPI.h>
+#include <ESPmDNS.h>
+#include <ArduinoOTA.h>
+#include "wifi_credentials.h"
 
-    // Uart serial
-  HardwareSerial MySerial(1);
+// Uart serial
+HardwareSerial MySerial(1);
 #endif
 
 #ifdef RECEIVER_SCREEN
-  Adafruit_SSD1306 display(RST_OLED);
+Adafruit_SSD1306 display(RST_OLED);
 #endif
 
-Smoothed <double> batterySensor;
+Smoothed<double> batterySensor;
 
-Smoothed <double> motorCurrent;
+Smoothed<double> motorCurrent;
 
 #include "radio.h"
-
 
 float signalStrength;
 float lastRssi;
@@ -49,20 +48,31 @@ nunchuckPackage chuckPackage;
 void setup()
 {
   // wait for VESC?
-  delay(1000);
+  //delay(1000);
 
-  Serial.begin(9600);
+  //Serial.begin(9600);
 
   // while (!Serial) {}; // wait for serial port to connect. Needed for native USB port only
 
   debug("Receiver");
 
   //loadEEPROMSettings();
-  setDefaultEEPROMSettings();
+  loadData();
+  loadSettings();
 
   calculateRatios();
 
-  pinMode(LED, OUTPUT);
+  if (receiverSettings.vescMode == UART_ONLY)
+  {
+    pinMode(LED, OUTPUT);
+  }
+  else if (receiverSettings.vescMode == UART_ADC)
+  {
+    pinMode(ADC_VESC, OUTPUT);
+  }
+
+  pinMode(AS_SWITCH, OUTPUT);
+  digitalWrite(AS_SWITCH, LOW);
 
   // 10 seconds average
   batterySensor.begin(SMOOTHED_EXPONENTIAL, 10);
@@ -73,91 +83,60 @@ void setup()
 
   //UART.setTimeout(UART_TIMEOUT); Might be necessary later on
 
-  #ifdef ARDUINO_SAMD_FEATHER_M0
+#ifdef ARDUINO_SAMD_FEATHER_M0
 
-    #ifndef FAKE_UART
-      UART.setSerialPort(&Serial1);
-      Serial1.begin(UART_SPEED);
-    #endif
+#ifndef FAKE_UART
+  UART.setSerialPort(&Serial1);
+  Serial1.begin(UART_SPEED);
+#endif
 
-    initRadio(radio);
+  initRadio(radio);
 
-  #elif ESP32
+#elif ESP32
 
-    #ifndef FAKE_UART
-      //UART.setSerialPort(&MySerial); Old
-      SetSerialPort(&MySerial);
-      // Comment this line for debugging without VESC
-      //MySerial.begin(UART_SPEED, SERIAL_8N1, RX, TX);
-    #endif
+#ifndef FAKE_UART
+  //UART.setSerialPort(&MySerial); Old
+  SetSerialPort(&MySerial);
+  // Comment this line for debugging without VESC
+  MySerial.begin(UART_SPEED, SERIAL_8N1, RX, TX);
+#endif
 
+  initRadio();
 
-    initRadio();
+  xTaskCreatePinnedToCore(
+      coreTask,                 /* Function to implement the task */
+      "coreTask",               /* Name of the task */
+      10000,                    /* Stack size in words */
+      NULL,                     /* Task input parameter */
+      configMAX_PRIORITIES - 1, /* Priority of the task */
+      NULL,                     /* Task handle. */
+      0);                       /* Core where the task should run */
 
-    xTaskCreatePinnedToCore(
-          coreTask,   /* Function to implement the task */
-          "coreTask", /* Name of the task */
-          10000,      /* Stack size in words */
-          NULL,       /* Task input parameter */
-          configMAX_PRIORITIES - 1,          /* Priority of the task */
-          NULL,       /* Task handle. */
-          0);         /* Core where the task should run */
-
-  #endif
+#endif
 
   debug("Setup complete - begin listening");
 
   pinMode(Vext, OUTPUT);
   digitalWrite(Vext, LOW);
 
-  #ifdef RECEIVER_SCREEN
-    display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-    display.powerOn();
-  #endif
-
-
-  // Working!
-  char buffer[4] = "Tes";
-  int32_t t;
-
-  t = ParseInt32(buffer);
-
-  boardConfig.nameProfile1 = t;
-  
-
-  //boardConfig.nameProfile2 = (uint8_t) (char) "Test2\0";
-  //boardConfig.nameProfile3 = (uint8_t) (char) "Test3\0";
-  //boardConfig.nameProfile4 = (uint8_t) (char) "Test4\0";
-  //boardConfig.nameProfile5 = "Test5";
+#ifdef RECEIVER_SCREEN
+  //display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  //display.powerOn();
+#endif
 }
 
-void SerializeInt32(char (&buf)[4], int32_t val)
+bool isTelemetryLost()
 {
-    uint32_t uval = val;
-    buf[0] = uval;
-    buf[1] = uval >> 8;
-    buf[2] = uval >> 16;
-    buf[3] = uval >> 24;
-}
-
-int32_t ParseInt32(const char (&buf)[4])
-{
-    // This prevents buf[i] from being promoted to a signed int.
-    uint32_t u0 = buf[0], u1 = buf[1], u2 = buf[2], u3 = buf[3];
-    uint32_t uval = u0 | (u1 << 8) | (u2 << 16) | (u3 << 24);
-    return uval;
-}
-
-
-bool isTelemetryLost() {
-  return telemetryTime !=0 // telemetry was active
-    && secondsSince(telemetryTime) > 1; // not received recently
+  return telemetryTime != 0                  // telemetry was active
+         && secondsSince(telemetryTime) > 1; // not received recently
 }
 
 // safety check
-bool isMoving() {
+bool isMoving()
+{
 
-  if (isTelemetryLost()) return true; // assume movement for safety
+  if (isTelemetryLost())
+    return true; // assume movement for safety
 
   return telemetry.getSpeed() != 0; // moving in any direction
 }
@@ -165,45 +144,55 @@ bool isMoving() {
 /*
    Calculate the battery level of the board based on the telemetry voltage
 */
-float batteryPackPercentage( float voltage ) {
+float batteryPackPercentage(float voltage)
+{
 
   float maxCellVoltage = 4.2;
   float minCellVoltage;
 
-  if (boardConfig.batteryType == 0) { // Li-ion
+  if (boardConfig.batteryType == 0)
+  { // Li-ion
     minCellVoltage = 3.1;
-  } else { // Li-po
+  }
+  else
+  { // Li-po
     minCellVoltage = 3.4;
   }
 
-  float percentage = (100 - ( (maxCellVoltage - voltage / boardConfig.batteryCells) / ((maxCellVoltage - minCellVoltage)) ) * 100);
+  float percentage = (100 - ((maxCellVoltage - voltage / boardConfig.batteryCells) / ((maxCellVoltage - minCellVoltage))) * 100);
 
-  if (percentage > 100.0) {
+  if (percentage > 100.0)
+  {
     return 100.0;
-  } else if (percentage < 0.0) {
+  }
+  else if (percentage < 0.0)
+  {
     return 0.0;
   }
 
   return percentage;
 }
 
-bool prepareUpdate() {
+bool prepareUpdate()
+{
 
   // safety checks
-  if (isMoving()) return false;
+  if (isMoving())
+    return false;
 
   state = UPDATE;
 
   // replace this with your WiFi network credentials
-  const char* ssid = WIFI_SSID; // e.g. "FBI Surveillance Van #34";
-  const char* password = WIFI_PASSWORD; // e.g. "12345678";
+  const char *ssid = WIFI_SSID;         // e.g. "FBI Surveillance Van #34";
+  const char *password = WIFI_PASSWORD; // e.g. "12345678";
 
   wifiStatus = "Connecting:";
   updateStatus = String(ssid);
-  
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+  while (WiFi.waitForConnectResult() != WL_CONNECTED)
+  {
     debug("Connection Failed!");
     delay(3000);
     // ESP.restart();
@@ -223,46 +212,49 @@ bool prepareUpdate() {
   // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
-
   ArduinoOTA
-    .onStart([]() {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-        type = "sketch";
-      else // U_SPIFFS
-        type = "filesystem";
+      .onStart([]() {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+          type = "sketch";
+        else // U_SPIFFS
+          type = "filesystem";
 
-      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-      updateStatus = "Start updating " + type;
-    })
-    .onEnd([]() {
-      Serial.println("\nEnd");
-    })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      updateStatus = "Progress: " + String(progress / (total / 100), 0) + "%";
-      Serial.println(updateStatus);
-    })
-    .onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) updateStatus = "Auth Failed";
-      else if (error == OTA_BEGIN_ERROR) updateStatus = "Begin Failed";
-      else if (error == OTA_CONNECT_ERROR) updateStatus = "Connect Failed";
-      else if (error == OTA_RECEIVE_ERROR) updateStatus = "Receive Failed";
-      else if (error == OTA_END_ERROR) updateStatus = "End Failed";
-    });
+        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+        updateStatus = "Start updating " + type;
+      })
+      .onEnd([]() {
+        Serial.println("\nEnd");
+      })
+      .onProgress([](unsigned int progress, unsigned int total) {
+        updateStatus = "Progress: " + String(progress / (total / 100), 0) + "%";
+        Serial.println(updateStatus);
+      })
+      .onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR)
+          updateStatus = "Auth Failed";
+        else if (error == OTA_BEGIN_ERROR)
+          updateStatus = "Begin Failed";
+        else if (error == OTA_CONNECT_ERROR)
+          updateStatus = "Connect Failed";
+        else if (error == OTA_RECEIVE_ERROR)
+          updateStatus = "Receive Failed";
+        else if (error == OTA_END_ERROR)
+          updateStatus = "End Failed";
+      });
 
   ArduinoOTA.begin();
 
   wifiStatus = "IP: " + WiFi.localIP().toString();
   updateStatus = "Waiting...";
   debug(wifiStatus);
-
-  
 }
 
 #ifdef RECEIVER_SCREEN
 
-int getStringWidth(String s) {
+int getStringWidth(String s)
+{
 
   int16_t x1, y1;
   uint16_t w1, h1;
@@ -271,7 +263,8 @@ int getStringWidth(String s) {
   return w1;
 }
 
-void drawString(String string, int x, int y, const GFXfont *font) {
+void drawString(String string, int x, int y, const GFXfont *font)
+{
 
   display.setFont(font);
 
@@ -279,89 +272,105 @@ void drawString(String string, int x, int y, const GFXfont *font) {
   display.print(string);
 }
 
-void drawStringCentered(String string, int x, int y, const GFXfont *font) {
+void drawStringCentered(String string, int x, int y, const GFXfont *font)
+{
   display.setFont(font);
   x = x - getStringWidth(string) / 2;
   drawString(string, x, y, font);
 }
 
-String getState() {
-  switch (state) {
-    case IDLE: return "Idle";
-    case CONNECTED: return "Normal";  // dB?
-    case STOPPING: return "Stopping";
-    case STOPPED: return "Stopped";
-    case PUSHING: return "Pushing";
-    case ENDLESS: return "Cruise";
-    case UPDATE: return "Update";
+String getState()
+{
+  switch (state)
+  {
+  case IDLE:
+    return "Idle";
+  case CONNECTED:
+    return "Normal"; // dB?
+  case STOPPING:
+    return "Stopping";
+  case STOPPED:
+    return "Stopped";
+  case PUSHING:
+    return "Pushing";
+  case ENDLESS:
+    return "Cruise";
+  case UPDATE:
+    return "Update";
   }
 }
 
-void updateScreen() {
+void updateScreen()
+{
 
   display.clearDisplay();
 
-  switch (state) {
+  switch (state)
+  {
 
-    case IDLE:
+  case IDLE:
+    drawBattery();
+    break;
+
+  case ENDLESS:
+    display.setTextColor(WHITE);
+    display.setFont(fontDigital);
+
+    display.setCursor(0, 20);
+    display.println("CUR: " + String(telemetry.getMotorCurrent(), 1) + " A");
+    display.println("SPD: " + String(telemetry.getSpeed(), 1));
+    break;
+
+  case UPDATE:
+    display.setTextColor(WHITE);
+    display.setFont(fontDesc);
+
+    display.setCursor(0, 12);
+
+    display.println(wifiStatus);
+    display.println(updateStatus);
+    break;
+
+  default:
+    if (throttle == default_throttle && !isMoving())
+    {
       drawBattery();
-      break;
-
-    case ENDLESS:
+    }
+    else
+    { // riding
       display.setTextColor(WHITE);
       display.setFont(fontDigital);
 
       display.setCursor(0, 20);
-      display.println("CUR: " + String(telemetry.getMotorCurrent(), 1) + " A");
-      display.println("SPD: " + String(telemetry.getSpeed(),1));
-      break;
-
-    case UPDATE:
-      display.setTextColor(WHITE);
-      display.setFont(fontDesc);
-
-      display.setCursor(0, 12);
-
-      display.println(wifiStatus);
-      display.println(updateStatus);
-      break;
-
-    default:
-      if (throttle == default_throttle && !isMoving()) {
-        drawBattery();
-      } else { // riding
-        display.setTextColor(WHITE);
-        display.setFont(fontDigital);
-
-        display.setCursor(0, 20);
-        display.println("THR: " + String(map(throttle, 0, 255, -100, 100)) + "%");
-        display.println("SPD: " + String(telemetry.getSpeed(),1) + " k");
-      }
-      break;
+      display.println("THR: " + String(map(throttle, 0, 255, -100, 100)) + "%");
+      display.println("SPD: " + String(telemetry.getSpeed(), 1) + " k");
+    }
+    break;
   }
 
   // ---- status ----
   display.setTextColor(WHITE);
 
   String s = getState() + "  " +
-    String(telemetry.getVoltage(), 1) + "v  " +
-    String(telemetry.getDistance(), 1) + "km";
+             String(telemetry.getVoltage(), 1) + "v  " +
+             String(telemetry.getDistance(), 1) + "km";
 
-  #ifdef FAKE_UART
-    s = "Board ID: " + String(boardID, HEX);
-  #endif
+#ifdef FAKE_UART
+  s = "Board ID: " + String(boardID, HEX);
+#endif
 
   drawStringCentered(s, 64, 62, fontDesc);
 
   display.display();
 }
 
-void drawBattery() {
+void drawBattery()
+{
 
   display.setTextColor(WHITE);
 
-
-  if (telemetry.getVoltage() == 0) {
+  if (telemetry.getVoltage() == 0)
+  {
 
     // no uart connection
     display.setFont();
@@ -375,117 +384,130 @@ void drawBattery() {
     else
       display.print("Signal: " + String(lastRssi, 0) + " dB");
 
-//    display.setCursor(0, 40);
-//    display.print("Delay: " + String(lastDelay));
+    //    display.setCursor(0, 40);
+    //    display.print("Delay: " + String(lastDelay));
 
     return;
   }
 
   // --- battery ----
-  int w = 120; int h = 46;
+  int w = 120;
+  int h = 46;
   display.drawRect(0, 0, w, h, WHITE);
-  display.drawRect(1, 1, w-2, h-2, WHITE);
+  display.drawRect(1, 1, w - 2, h - 2, WHITE);
 
-  display.fillRect(w, 10, 6, h-10-10, WHITE);
+  display.fillRect(w, 10, 6, h - 10 - 10, WHITE);
 
   // fill
   float pc = batteryPackPercentage(telemetry.getVoltage());
-  int x = w * pc / 100-8;
-  display.fillRect(4, 4, x, h-8, WHITE);
+  int x = w * pc / 100 - 8;
+  display.fillRect(4, 4, x, h - 8, WHITE);
 
   // % value
-  if (pc > 50) { // left side
+  if (pc > 50)
+  { // left side
     display.setTextColor(BLACK);
-    drawStringCentered(String(pc, 0) + "%", x/2 + 4, 31, fontBig);
-  } else { // right side
+    drawStringCentered(String(pc, 0) + "%", x / 2 + 4, 31, fontBig);
+  }
+  else
+  { // right side
     display.setTextColor(WHITE);
     drawStringCentered(String(pc, 0) + "%", x + (w - x) / 2, 31, fontBig);
   }
-
 }
 #endif // RECEIVER_SCREEN
 
-void loop() { // core 1
+void loop()
+{ // core 1
 
   // get telemetry;
+  //if(uartTelemetryAvailable) {
   getUartData(); // every 250  ms
+  //}
 
-  #ifdef ARDUINO_SAMD_ZERO
-    radioExchange();
-    stateMachine();
-  #elif RECEIVER_SCREEN
-    if (state == UPDATE) {
-      ArduinoOTA.handle();
-    }
-    updateScreen(); // 25 ms
-    vTaskDelay(1);
-  #endif
+#ifdef ARDUINO_SAMD_ZERO
+  radioExchange();
+  stateMachine();
+#elif RECEIVER_SCREEN
+  if (state == UPDATE)
+  {
+    ArduinoOTA.handle();
+  }
+  //updateScreen(); // 25 ms
+  vTaskDelay(1);
+#endif
 }
 
 #ifdef ESP32
-  void coreTask( void * pvParameters ){  // core 0
+void coreTask(void *pvParameters)
+{ // core 0
 
-    String taskMessage = "radio task running on core ";
-    taskMessage = taskMessage + xPortGetCoreID();
-    Serial.println(taskMessage);
+  String taskMessage = "radio task running on core ";
+  taskMessage = taskMessage + xPortGetCoreID();
+  Serial.println(taskMessage);
 
-    while (true) {
-      radioExchange();
-      stateMachine();
-      vTaskDelay(1);
-    }
+  while (true)
+  {
+    radioExchange();
+    stateMachine();
+    vTaskDelay(1);
   }
+}
 #endif
 
-void pairingRequest() {
+void pairingRequest()
+{
 
   // safety checks
 
-  if (millis() < 3000){
+  if (millis() < 3000)
+  {
     setState(PAIRING);
     return;
   }
-    
-  
 
   // todo: confirm pairing
-
 }
 
-bool receiveData() {
+bool receiveData()
+{
 
   uint8_t len = sizeof(RemotePacket) + CRC_SIZE; // 9
   uint8_t buf[len];
 
   bool received = false;
 
-  #ifdef ARDUINO_SAMD_ZERO
+#ifdef ARDUINO_SAMD_ZERO
 
-    received = radio.recv(buf, &len);
+  received = radio.recv(buf, &len);
 
-  #elif ESP32
+#elif ESP32
 
-    int bytes = 0;
-    for (int i = 0; i < len; i++) {
-      buf[i] = LoRa.read();
-      bytes++;
-    }
-    // lastRssi = LoRa.packetRssi();
-    len = bytes;
-    received = true;
+  int bytes = 0;
+  for (int i = 0; i < len; i++)
+  {
+    buf[i] = LoRa.read();
+    bytes++;
+  }
+  // lastRssi = LoRa.packetRssi();
+  len = bytes;
+  received = true;
 
-  #endif
+#endif
 
-  if (!received) return false;
+  if (!received)
+    return false;
 
   // size check
-  if (len != sizeof(RemotePacket) + CRC_SIZE) {
+  if (len != sizeof(RemotePacket) + CRC_SIZE)
+  {
     debug("Wrong packet size");
     return false;
   }
 
   // crc check
-  if (CRC8(buf, sizeof(remPacket)) != buf[sizeof(remPacket)]) {
+  if (CRC8(buf, sizeof(remPacket)) != buf[sizeof(remPacket)])
+  {
     debug("CRC mismatch");
     return false;
   }
@@ -493,32 +515,38 @@ bool receiveData() {
   // process packet
   memcpy(&remPacket, buf, sizeof(remPacket));
 
-  // address check
-  #ifdef FAKE_UART
-    // accept any address
-  #else
-    if (remPacket.address != boardID) {
-      // pairing request?
-      if (!isMoving() && remPacket.command == SET_STATE && remPacket.data == PAIRING) {
-        // accept any address
-      } else {
-        Serial.print("Wrong Board ID, please use: 0x");
-        Serial.println(String(boardID, HEX));
-        return false;
-      }
+// address check
+#ifdef FAKE_UART
+  // accept any address
+#else
+  if (remPacket.address != boardID)
+  {
+    // pairing request?
+    if (!isMoving() && remPacket.command == SET_STATE && remPacket.data == PAIRING)
+    {
+      // accept any address
     }
-  #endif
+    else
+    {
+      Serial.print("Wrong Board ID, please use: 0x");
+      Serial.println(String(boardID, HEX));
+      return false;
+    }
+  }
+#endif
 
-  if (remPacket.version != VERSION) {
+  if (remPacket.version != VERSION)
+  {
     Serial.print("Version mismatch!");
   }
 
   return true;
 
-    // signalStrength = constrain(map(radio.lastRssi(), -77, -35, 0, 100), 0, 100);
+  // signalStrength = constrain(map(radio.lastRssi(), -77, -35, 0, 100), 0, 100);
 }
 
-bool sendPacket(const void * packet, uint8_t len) {
+bool sendPacket(const void *packet, uint8_t len)
+{
 
   // calc crc
   uint8_t crc = CRC8(packet, len);
@@ -526,49 +554,54 @@ bool sendPacket(const void * packet, uint8_t len) {
   // struct to buffer
   len += CRC_SIZE;
   uint8_t buf[len];
-  memcpy (buf, packet, len);
+  memcpy(buf, packet, len);
   buf[len - CRC_SIZE] = crc;
 
   bool sent = false;
 
-  #ifdef ESP32
+#ifdef ESP32
 
-    LoRa.beginPacket(len);
-    int t = LoRa.write(buf, len);
-    LoRa.endPacket();
-    
+  LoRa.beginPacket(len);
+  int t = LoRa.write(buf, len);
+  LoRa.endPacket();
 
-    sent = t == len;
-    // LoRa.receive(sizeof(remPacket) + CRC_SIZE);
+  sent = t == len;
+  // LoRa.receive(sizeof(remPacket) + CRC_SIZE);
 
-  #elif ARDUINO_SAMD_ZERO
+#elif ARDUINO_SAMD_ZERO
 
-    sent = radio.send(buf, len);
+  sent = radio.send(buf, len);
 
-    if (sent) radio.waitPacketSent();
+  if (sent)
+    radio.waitPacketSent();
 
-  #endif
+#endif
 
   return sent;
 }
 
-bool sendData(uint8_t response) {
+bool sendData(uint8_t response)
+{
 
   // send packet
-  switch (response) {
+  switch (response)
+  {
 
   case ACK_ONLY: // no extra data to send
     telemetry.header.type = response;
     telemetry.header.chain = remPacket.counter;
     telemetry.header.state = state;
+    telemetry.header.profile = receiverData.lastProfile;
     return sendPacket(&telemetry, sizeof(telemetry));
 
   case TELEMETRY:
     telemetry.header.type = response;
     telemetry.header.chain = remPacket.counter;
     telemetry.header.state = state;
+    telemetry.header.profile = receiverData.lastProfile;
 
-    if (sendPacket(&telemetry, sizeof(telemetry))) {
+    if (sendPacket(&telemetry, sizeof(telemetry)))
+    {
       telemetryUpdated = false;
       return true;
     }
@@ -579,8 +612,9 @@ bool sendData(uint8_t response) {
     boardConfig.header.type = response;
     boardConfig.header.chain = remPacket.counter;
 
-    if (sendPacket(&boardConfig, sizeof(boardConfig))) {
-      justStarted = false; // send config once
+    if (sendPacket(&boardConfig, sizeof(boardConfig)))
+    {
+      sendConfig = false; // send config once
       return true;
     }
     break;
@@ -591,7 +625,8 @@ bool sendData(uint8_t response) {
     boardInfo.header.chain = remPacket.counter;
     boardInfo.id = boardID;
 
-    if (sendPacket(&boardInfo, sizeof(boardInfo))) {
+    if (sendPacket(&boardInfo, sizeof(boardInfo)))
+    {
       return true;
     }
     break;
@@ -600,59 +635,69 @@ bool sendData(uint8_t response) {
   return false;
 }
 
-bool dataAvailable() {
+bool dataAvailable()
+{
 
-  #ifdef ARDUINO_SAMD_ZERO
+#ifdef ARDUINO_SAMD_ZERO
 
-    return radio.available();
+  return radio.available();
 
-  #elif ESP32
+#elif ESP32
 
-    int packetSize = LoRa.parsePacket(sizeof(remPacket) + CRC_SIZE);
-    return packetSize > 0;
+  int packetSize = LoRa.parsePacket(sizeof(remPacket) + CRC_SIZE);
+  return packetSize > 0;
 
-  #endif
+#endif
 }
 
-void setState(AppState newState) {
+void setState(AppState newState)
+{
 
-  switch (newState) {
+  switch (newState)
+  {
 
-    case IDLE: break;
+  case IDLE:
+    break;
 
-    case PUSHING:
-      timeSpeedReached = millis();
-      break;
+  case PUSHING:
+    timeSpeedReached = millis();
+    break;
 
-    case ENDLESS:
-      if (isTelemetryLost()) return;
-      cruiseControlStart = millis();
-      break;
+  case ENDLESS:
+    if (isTelemetryLost())
+      return;
+    cruiseControlStart = millis();
+    break;
 
-    case CONNECTED:
-      switch (state) {
-        case UPDATE: return;
+  case CONNECTED:
+    switch (state)
+    {
+    case UPDATE:
+      return;
 
-        case PUSHING: // monitor data
-        case STOPPING:
-        case ENDLESS:
-        case COASTING:
-          if (remPacket.data == default_throttle) return;
-          break;
-      }
-      // prevent auto-stop
-      timeoutTimer = millis();
-      connected = true;
-      break;
-
+    case PUSHING: // monitor data
     case STOPPING:
-    case STOPPED:
-      debug("disconnected");
-      lastBrakeTime = millis();
+    case ENDLESS:
+    case COASTING:
+      if (remPacket.data == default_throttle)
+        return;
       break;
+    }
+    // prevent auto-stop
+    timeoutTimer = millis();
+    connected = true;
+    break;
 
-    case UPDATE: break;
-    case PAIRING: break;
+  case STOPPING:
+  case STOPPED:
+    debug("disconnected");
+    lastBrakeTime = millis();
+    break;
+
+  case UPDATE:
+    break;
+  case PAIRING:
+    break;
   }
 
   // apply state
@@ -660,21 +705,26 @@ void setState(AppState newState) {
   state = newState;
 }
 
-void radioExchange() {
+void radioExchange()
+{
 
-  if(state == UPDATE) {
+  if (state == UPDATE)
+  {
     receivedData = false;
     return;
   }
   // controlStatusLed();
 
   /* Begin listen for transmission */
-  if ( dataAvailable() ) {
+  if (dataAvailable())
+  {
 
     // led on
-    digitalWrite(LED, HIGH);
+    if (receiverSettings.vescMode == UART_ONLY)
+      digitalWrite(LED, HIGH);
 
-    if (receiveData()) {
+    if (receiveData())
+    {
 
       receivedData = true;
 
@@ -683,186 +733,226 @@ void radioExchange() {
       // Send acknowledgement
       uint8_t response = ACK_ONLY;
 
-      switch (remPacket.command) {
-        case SET_THROTTLE:
-        case SET_CRUISE:
-          setState(CONNECTED); // keep connection
-          if (telemetryUpdated) { response = TELEMETRY; }
-          break;
+      switch (remPacket.command)
+      {
+      case SET_THROTTLE:
+      case SET_CRUISE:
+        setState(CONNECTED); // keep connection
+        if (telemetryUpdated)
+        {
+          response = TELEMETRY;
+        }
+        break;
 
-        case SET_STATE:
-          switch (remPacket.data) {
-            case UPDATE:
-              prepareUpdate();
-              break;
-            case PAIRING:
-              if(state != UPDATE) {
-                pairingRequest();
-              }
-              // request confirmed?
-              if (state == PAIRING) response = BOARD_ID;
-              break;
+      case SET_STATE:
+        switch (remPacket.data)
+        {
+        case UPDATE:
+          prepareUpdate();
+          break;
+        case PAIRING:
+          if (state != UPDATE)
+          {
+            pairingRequest();
           }
+          // request confirmed?
+          if (state == PAIRING)
+            response = BOARD_ID;
           break;
-
-        case GET_CONFIG: response = CONFIG; break;
-
+        }
+        break;
+      case SET_MODE:
+        break;
+      case SET_PROFILE:
+        //pushVescProfile(remPacket.data);
+        break;
+      case SET_BOARD_SHUTDOWN:
+        shutdownBoard();
+        break;
+      case GET_CONFIG:
+        response = CONFIG;
+        break;
       }
 
       // send config after power on
-      if (justStarted) response = CONFIG;
+      if (sendConfig)
+        response = CONFIG;
 
       // // allow remote to receive
       // delay(5);
 
-      if (sendData(response)) {
+      if (sendData(response))
+      {
         // led on
-        digitalWrite(LED, LOW);
+        if (receiverSettings.vescMode == UART_ONLY)
+          digitalWrite(LED, LOW);
         // debug("Sent response");
       }
 
       // control
-      switch (remPacket.command) {
-        case SET_THROTTLE: // control VESC speed
-          // ignore during auto-stop/update/...
-          if (state == CONNECTED) {
-            setThrottle(remPacket.data);
-          }
-          break;
+      switch (remPacket.command)
+      {
+      case SET_THROTTLE: // control VESC speed
+        // ignore during auto-stop/update/...
+        if (state == CONNECTED)
+        {
+          setThrottle(remPacket.data);
+        }
+        break;
 
-        case SET_CRUISE:
-          setCruise(remPacket.data);
-          break;
+      case SET_CRUISE:
+        setCruise(remPacket.data);
+        break;
       }
-
-    } else receivedData = false;
-
+    }
+    else
+      receivedData = false;
   }
   /* End listen for transmission */
-
 }
 
-void autoCruise(uint8_t speed) {
+void autoCruise(uint8_t speed)
+{
 
-  if (millisSince(lastCruiseControl) > 50) {
+  if (millisSince(lastCruiseControl) > 50)
+  {
     lastCruiseControl = millis();
 
     setCruise(speed);
   }
 }
 
-void stateMachine() { // handle auto-stop, endless mode, etc...
+void stateMachine()
+{ // handle auto-stop, endless mode, etc...
 
-  switch (state) {
+  switch (state)
+  {
 
-    case IDLE: // no remote connected
+  case IDLE: // no remote connected
 
-      setThrottle(default_throttle);
-      if (telemetry.getSpeed() >= PUSHING_SPEED) setState(PUSHING);
-      break;
+    setThrottle(default_throttle);
+    if (telemetry.getSpeed() >= PUSHING_SPEED)
+      setState(PUSHING);
+    break;
 
-    case PUSHING: // pushing with no remote connected
+  case PUSHING: // pushing with no remote connected
 
-      if (telemetry.getSpeed() < PUSHING_SPEED) { // pushing ended
-        if (AUTO_CRUISE_ON) {
-          if (secondsSince(timeSpeedReached) > PUSHING_TIME)
-            setState(ENDLESS); // start cruise control
-          else
-            setState(IDLE); // not enough pushing
-        }
-      } else if (telemetry.getSpeed() > MAX_PUSHING_SPEED) { // downhill
-        setState(STOPPING);
+    if (telemetry.getSpeed() < PUSHING_SPEED)
+    { // pushing ended
+      if (AUTO_CRUISE_ON)
+      {
+        if (secondsSince(timeSpeedReached) > PUSHING_TIME)
+          setState(ENDLESS); // start cruise control
+        else
+          setState(IDLE); // not enough pushing
       }
-      break;
+    }
+    else if (telemetry.getSpeed() > MAX_PUSHING_SPEED)
+    { // downhill
+      setState(STOPPING);
+    }
+    break;
 
-    case ENDLESS: // cruise without remote at ~12 km/h / 7 mph
+  case ENDLESS: // cruise without remote at ~12 km/h / 7 mph
 
-      autoCruise(PUSHING_SPEED);
+    autoCruise(PUSHING_SPEED);
 
-      // detect a foot brake /
-      if (true) {
-        double current = telemetry.getMotorCurrent(); // ~2 amps
-        double smoothed = motorCurrent.get();
+    // detect a foot brake /
+    if (true)
+    {
+      double current = telemetry.getMotorCurrent(); // ~2 amps
+      double smoothed = motorCurrent.get();
 
-        // sudden change (> 5 A) after 2 seconds
-        if (abs(current - smoothed) > CRUISE_CURRENT_SPIKE && secondsSince(cruiseControlStart) > 2) {
-          setState(IDLE);
-        }
-
-        // switch to coasting after some time
-        if (secondsSince(cruiseControlStart) > AUTO_CRUISE_TIME) {
-          // keep cruise control downhill/uphill
-          if (abs(current) <= CRUISE_CURRENT_LOW) setState(COASTING);
-        }
-
-        motorCurrent.add(current);
-      }
-      break;
-
-    case COASTING: // waiting for board to slowdown
-
-      setThrottle(default_throttle);
-      // avoid ENDLESS > IDLE > PUSHING loop
-      if (telemetry.getSpeed() < PUSHING_SPEED) setState(IDLE);
-      break;
-
-    case CONNECTED: // remote is connected
-
-      // timeout handling
-      if (millisSince(timeoutTimer) > timeoutMax) {
-        debug("receiver timeout");
-
-        // No speed is received within the timeout limit.
-        connected = false;
-        timeoutTimer = millis();
-
-        setState(STOPPING);
-
-        // use last throttle
-        throttle = lastThrottle;
-      }
-      break;
-
-    case STOPPING: // emergency brake when remote has disconnected
-
-      // start braking from zero throttle
-      if (throttle > default_throttle) {
-        throttle = default_throttle;
+      // sudden change (> 5 A) after 2 seconds
+      if (abs(current - smoothed) > CRUISE_CURRENT_SPIKE && secondsSince(cruiseControlStart) > 2)
+      {
+        setState(IDLE);
       }
 
-      if (secondsSince(lastBrakeTime) > AUTO_BRAKE_INTERVAL) {
-
-        // decrease throttle to brake  127 / 5 * 0.1
-        float brakeForce = constrain(default_throttle / AUTO_BRAKE_TIME * AUTO_BRAKE_INTERVAL, 0, 10);
-
-        // apply brakes
-        if (throttle > brakeForce) throttle -= brakeForce; else throttle = 0;
-        setThrottle(throttle);
-
-        lastBrakeTime = millis();
+      // switch to coasting after some time
+      if (secondsSince(cruiseControlStart) > AUTO_CRUISE_TIME)
+      {
+        // keep cruise control downhill/uphill
+        if (abs(current) <= CRUISE_CURRENT_LOW)
+          setState(COASTING);
       }
 
-      // check speed
-      if (throttle == 0 && !isMoving()) {
-        setState(STOPPED);
-      }
+      motorCurrent.add(current);
+    }
+    break;
 
-      break;
+  case COASTING: // waiting for board to slowdown
 
-    case STOPPED:
+    setThrottle(default_throttle);
+    // avoid ENDLESS > IDLE > PUSHING loop
+    if (telemetry.getSpeed() < PUSHING_SPEED)
+      setState(IDLE);
+    break;
 
-      // release brakes after a few seconds
-      if (secondsSince(lastBrakeTime) > AUTO_BRAKE_RELEASE) setState(IDLE);
-      break;
+  case CONNECTED: // remote is connected
 
-    case UPDATE:
-      break;
+    // timeout handling
+    if (millisSince(timeoutTimer) > timeoutMax)
+    {
+      debug("receiver timeout");
 
+      // No speed is received within the timeout limit.
+      connected = false;
+      timeoutTimer = millis();
+
+      setState(STOPPING);
+
+      // use last throttle
+      throttle = lastThrottle;
+    }
+    break;
+
+  case STOPPING: // emergency brake when remote has disconnected
+
+    // start braking from zero throttle
+    if (throttle > default_throttle)
+    {
+      throttle = default_throttle;
+    }
+
+    if (secondsSince(lastBrakeTime) > AUTO_BRAKE_INTERVAL)
+    {
+
+      // decrease throttle to brake  127 / 5 * 0.1
+      float brakeForce = constrain(default_throttle / AUTO_BRAKE_TIME * AUTO_BRAKE_INTERVAL, 0, 10);
+
+      // apply brakes
+      if (throttle > brakeForce)
+        throttle -= brakeForce;
+      else
+        throttle = 0;
+      setThrottle(throttle);
+
+      lastBrakeTime = millis();
+    }
+
+    // check speed
+    if (throttle == 0 && !isMoving())
+    {
+      setState(STOPPED);
+    }
+
+    break;
+
+  case STOPPED:
+
+    // release brakes after a few seconds
+    if (secondsSince(lastBrakeTime) > AUTO_BRAKE_RELEASE)
+      setState(IDLE);
+    break;
+
+  case UPDATE:
+    break;
   }
 }
 
-
-void setStatus(uint8_t code){
+void setStatus(uint8_t code)
+{
 
   short cycle = 0;
 
@@ -880,23 +970,26 @@ void setStatus(uint8_t code){
   // }
 }
 
-
 // Update a single setting value
-void updateSetting( uint8_t setting, uint64_t value)
+void updateSetting(uint8_t setting, uint64_t value)
 {
   // Map remote setting indexes to receiver settings
-  switch( setting ){
-    case 0: setting = 0; break;  // TriggerMode
-    case 7: setting = 1; break;  // ControlMode
-    case 11: setting = 2; break; // Address
+  switch (setting)
+  {
+  case 0:
+    setting = 0;
+    break; // TriggerMode
+  case 7:
+    setting = 1;
+    break; // ControlMode
+  case 11:
+    setting = 2;
+    break; // Address
   }
 
-  setSettingValue( setting, value);
-
-  updateEEPROMSettings();
-
   // The address has changed, we need to reinitiate the receiver module
-  if (setting == 2) {
+  if (setting == 2)
+  {
     // initRadio(radio);
   }
 }
@@ -937,51 +1030,67 @@ void setCruise ( bool cruise, uint16_t setPoint ){
 
 void setThrottle(uint16_t value)
 {
-    // update display
-    throttle = value;
+  // update display
+  throttle = value;
 
-    // UART
-    #ifndef FAKE_UART
+// UART
+#ifndef FAKE_UART
 
-    /* Old
+  /* Old
     UART.nunchuck.valueY = value;
     UART.nunchuck.upperButton = false;
     UART.nunchuck.lowerButton = false;
     UART.setNunchuckValues();
     **/
 
-   chuckPackage.valYJoy = value;
-   chuckPackage.valUpperButton = false;
-   chuckPackage.valLowerButton = false;
-   VescUartSetNunchukValues(chuckPackage);
+  if (receiverSettings.vescMode == UART_ONLY)
+  {
+    chuckPackage.valYJoy = value;
+    chuckPackage.valUpperButton = false;
+    chuckPackage.valLowerButton = false;
+    VescUartSetNunchukValues(chuckPackage);
+  }
+  else if (receiverSettings.vescMode == UART_ADC)
+  {
+    dacWrite(ADC_VESC, value);
+    digitalWrite(ADC_CRUISE, HIGH);
+  }
 
+#endif
+  // PPM
+  //    digitalWrite(throttlePin, HIGH);
+  //    delayMicroseconds(map(throttle, 0, 255, 1000, 2000) );
+  //    digitalWrite(throttlePin, LOW);
 
-    #endif
-    // PPM
-    //    digitalWrite(throttlePin, HIGH);
-    //    delayMicroseconds(map(throttle, 0, 255, 1000, 2000) );
-    //    digitalWrite(throttlePin, LOW);
-
-    // remember throttle for smooth auto stop
-    lastThrottle = throttle;
+  // remember throttle for smooth auto stop
+  lastThrottle = throttle;
 }
 
-void setCruise(uint8_t speed) {
+void setCruise(uint8_t speed)
+{
 
-    // UART
-    #ifndef FAKE_UART
-    /* Old
+// UART
+#ifndef FAKE_UART
+  /* Old
     UART.nunchuck.valueY = 127;
     UART.nunchuck.upperButton = false;
     UART.nunchuck.lowerButton = true;
     UART.setNunchuckValues();
     **/
-
+  if (receiverSettings.vescMode == UART_ONLY)
+  {
     chuckPackage.valYJoy = 127;
     chuckPackage.valUpperButton = false;
     chuckPackage.valLowerButton = true;
     VescUartSetNunchukValues(chuckPackage);
-    #endif
+  }
+  else if (receiverSettings.vescMode == UART_ADC)
+  {
+    dacWrite(ADC_VESC, 127);
+    digitalWrite(ADC_CRUISE, LOW);
+  }
+
+#endif
 }
 
 // void speedControl( uint16_t throttle , bool trigger )
@@ -1018,54 +1127,60 @@ void setCruise(uint8_t speed) {
 /*
    Update values used to calculate speed and distance travelled.
 */
-void calculateRatios() {
+void calculateRatios()
+{
   // Gearing ratio
-  gearRatio = (float)boardConfig.motorPulley / (float)boardConfig.wheelPulley;
+  gearRatio = (float)receiverSettings.motorPulley / (float)receiverSettings.wheelPulley;
   // ERPM to Km/h
-  ratioRpmSpeed = (gearRatio * 60 * (float)boardConfig.wheelDiameter * 3.14156) / (((float)boardConfig.motorPoles / 2) * 1E6);
+  ratioRpmSpeed = (gearRatio * 60 * (float)receiverSettings.wheelDiameter * 3.14156) / (((float)receiverSettings.motorPoles / 2) * 1E6);
   // Pulses to km travelled
-  ratioPulseDistance = (gearRatio * (float)boardConfig.wheelDiameter * 3.14156) / (((float)boardConfig.motorPoles * 3) * 1E6);
+  ratioPulseDistance = (gearRatio * (float)receiverSettings.wheelDiameter * 3.14156) / (((float)receiverSettings.motorPoles * 3) * 1E6);
 }
 
 // rpm to km/h
-float rpm2speed(long rpm) {
+float rpm2speed(long rpm)
+{
   return abs(ratioRpmSpeed * rpm);
 }
 
-// rpm to km/h
-long speed2rpm(uint8_t speed) {
+// km/h to rpm
+long speed2rpm(uint8_t speed)
+{
   return speed / ratioRpmSpeed;
 }
 
 // tachometerAbs to km
-float tach2dist(long tachometer) {
+float tach2dist(long tachometer)
+{
   return ratioPulseDistance * tachometer;
 }
 
 void getUartData()
 {
-  if (millisSince(lastUartPull) >= uartPullInterval) {
+  if (millisSince(lastUartPull) >= uartPullInterval)
+  {
 
     lastUartPull = millis();
 
-    // debug
-    #ifdef FAKE_UART
-      batterySensor.add(41 + (rand()%40) / 100.0);
-      telemetry.setVoltage(batterySensor.get());
-      telemetry.setDistance(rand()%30);
-      telemetry.setSpeed(0);
-      telemetry.setMotorCurrent(-21);
-      telemetry.setInputCurrent(12);
-      telemetry.tempFET = 37;
-      telemetry.tempMotor = 60;
+// debug
+#ifdef FAKE_UART
+    batterySensor.add(41 + (rand() % 40) / 100.0);
+    telemetry.setVoltage(batterySensor.get());
+    telemetry.setDistance(rand() % 30);
+    telemetry.setSpeed(0);
+    telemetry.setMotorCurrent(-21);
+    telemetry.setInputCurrent(12);
+    telemetry.tempFET = 37;
+    telemetry.tempMotor = 60;
 
-      telemetryUpdated = true;
-      delay(7);
-      return;
-    #endif
+    telemetryUpdated = true;
+    delay(7);
+    return;
+#endif
 
     // Only get what we need
-    if ( VescUartGet(dataPackage) ) {
+    if (VescUartGet(dataPackage))
+    {
       // float dutyCycleNow;
       // float ampHours;
       // float ampHoursCharged;
@@ -1074,9 +1189,12 @@ void getUartData()
       float voltage = dataPackage.inpVoltage;
       batterySensor.add(voltage);
 
-      if (batteryPackPercentage(voltage) > 0) {
+      if (batteryPackPercentage(voltage) > 0)
+      {
         telemetry.setVoltage(batterySensor.get());
-      } else { // ESC is off!
+      }
+      else
+      { // ESC is off!
         telemetry.setVoltage(voltage);
       }
 
@@ -1088,16 +1206,19 @@ void getUartData()
       // temperature
       telemetry.tempFET = round(dataPackage.tempFetFiltered);
       telemetry.tempMotor = round(dataPackage.tempMotorFiltered);
-      if (telemetry.tempMotor > 160) telemetry.tempMotor = 0; // no sensor
+      if (telemetry.tempMotor > 160)
+        telemetry.tempMotor = 0; // no sensor
 
       // safety check
-      if (telemetry.getSpeed() > 100) return;
+      if (telemetry.getSpeed() > 100)
+        return;
 
       lastDelay = millis() - lastUartPull;
       telemetryUpdated = true;
       telemetryTime = millis();
-
-    } else {
+    }
+    else
+    {
       // returnData.ampHours       = 0.0;
       // returnData.inpVoltage     = 0.0;
       // returnData.rpm            = 0;
@@ -1112,7 +1233,8 @@ String uint64ToString(uint64_t number)
   unsigned long part1 = (unsigned long)((number >> 32)); // Bitwise Right Shift
   unsigned long part2 = (unsigned long)((number));
 
-  if (part1 == 0){
+  if (part1 == 0)
+  {
     return String(part2, DEC);
   }
 
@@ -1127,98 +1249,227 @@ String uint64ToAddress(uint64_t number)
   return String(part1, HEX) + String(part2, HEX);
 }
 
+bool pushVescProfile(uint8_t profile)
+{
+  float tempMaxErpm;
+  float tempMaxMinErpm;
+
+  loadProfile(profile, true);
+
+  tempMaxErpm = speed2rpm(vesc_profile[profile].maxSpeed) * (receiverSettings.motorPoles / 2);
+  tempMaxMinErpm = speed2rpm(vesc_profile[profile].maxSpeed) * (receiverSettings.motorPoles / 2);
+
+  if (tempMaxErpm > vesc_profile[0].abs_max_erpm)
+    tempMaxErpm = vesc_profile[0].abs_max_erpm;
+  if (tempMaxMinErpm > vesc_profile[0].abs_max_erpm_reverse)
+    tempMaxMinErpm = vesc_profile[0].abs_max_erpm_reverse;
+
+  uartTelemetryAvailable = false;
+  delay(500);
+
+  if (VescUartGet(motorConfigPackage))
+  {
+    delay(100);
+    //motorConfigPackage.lo_current_max = 17.1;
+    boardConfig.maxRange = (uint8_t)motorConfigPackage.lo_current_max;
+
+    motorConfigPackage.lo_current_max = vesc_profile[profile].motor_current_max;
+    motorConfigPackage.lo_current_min = vesc_profile[profile].motor_current_brake;
+    motorConfigPackage.lo_in_current_max = vesc_profile[profile].battery_current_max;
+    motorConfigPackage.lo_in_current_min = vesc_profile[profile].battery_current_max_regen;
+    motorConfigPackage.l_battery_cut_start = vesc_profile[profile].battery_voltage_cutoff_start * receiverSettings.batteryCells;
+    motorConfigPackage.l_battery_cut_end = vesc_profile[profile].battery_voltage_cutoff_end * receiverSettings.batteryCells;
+    motorConfigPackage.l_max_erpm = tempMaxErpm;
+    motorConfigPackage.l_min_erpm = tempMaxMinErpm;
+
+    if (!VescUartSet(motorConfigPackage))
+    {
+      return false;
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  //uartTelemetryAvailable = false;
+  //delay(500);
+
+  //VescUartGet(motorConfigPackage);
+  //delay(100);
+  //boardConfig.maxRange = (uint8_t) motorConfigPackage.lo_current_max;
+  //motorConfigPackage.lo_in_current_max = 13.3;
+  //VescUartSet(motorConfigPackage);
+
+  //uartTelemetryAvailable = true;
+
+  prefs.begin("FFNRD");
+  prefs.putUChar("lastProfile", profile);
+  prefs.end();
+
+  boardConfig.setMaxSpeed(vesc_profile[profile].maxSpeed);
+  boardConfig.setMotorCurrentMax(vesc_profile[profile].motor_current_max);
+  boardConfig.setMotorCurrentBrake(vesc_profile[profile].motor_current_brake);
+  boardConfig.setBatteryCurrentMax(vesc_profile[profile].battery_current_max);
+  boardConfig.setBatteryCurrentMaxRegen(vesc_profile[profile].battery_current_max_regen);
+
+  sendConfig = true;
+
+  receiverData.lastProfile = profile;
+  return true;
+}
+
+void loadData()
+{
+  prefs.begin("FFNRD");
+
+  receiverData.lastProfile = prefs.getUChar("lastProfile", 0);
+
+  prefs.end();
+}
+
 // Settings functions
-void setDefaultEEPROMSettings()
+void loadSettings()
 {
 
   boardID = CPU::getID();
   Serial.println("Board ID: " + String(boardID, HEX));
 
-  boardConfig.maxSpeed = MAX_SPEED; // 30 km/h
-  boardConfig.maxRange = MAX_RANGE;      // km
-  boardConfig.batteryCells = BATTERY_CELLS;
-  boardConfig.batteryType = BOARD_BATTERY_TYPE;    // 0: Li-ion | 1: LiPo
-  boardConfig.motorPoles = MOTOR_POLES;
-  boardConfig.wheelDiameter = WHEEL_DIAMETER;
-  boardConfig.wheelPulley = WHEEL_PULLEY;
-  boardConfig.motorPulley = MOTOR_PULLEY;
-  /*boardConfig.nameProfile1 = "Test1";
-  boardConfig.nameProfile2 = "Test2";
-  boardConfig.nameProfile3 = "Test3";
-  boardConfig.nameProfile4 = "Test4";
-  boardConfig.nameProfile5 = "Test5";
-**/
+  /*prefs.begin("FFNRS");
 
+  // General settings
+  receiverSettings.maxRange = prefs.getUChar("MAXRANGE", 20);
+  receiverSettings.batteryCells = prefs.getUChar("BATTERYCELLS", 10);
+  receiverSettings.batteryType = prefs.getUChar("BATTERYTYPE", 0);
+  receiverSettings.motorPoles = prefs.getUChar("MOTORPOLES", 14);
+  receiverSettings.wheelDiameter = prefs.getUChar("WHEELDIA", 97);
+  receiverSettings.wheelPulley = prefs.getUChar("WHEELPULLEY", 36);
+  receiverSettings.motorPulley = prefs.getUChar("MOTORPULLEY", 15);
+  receiverSettings.vescCount = prefs.getUChar("VESCCOUNT", 1);
 
-  updateEEPROMSettings();
+  // Estop settings
+  receiverSettings.estopMax = prefs.getUChar("ESTOPMAX", 100);
+  receiverSettings.estopTime = prefs.getFloat("ESTOPTIME", 10);
+  receiverSettings.estopRelease = prefs.getUChar("ESTOPRELEASE", 5);
+  receiverSettings.estopInterval = prefs.getFloat("ESTOPINTERVAL", 0.1);
+
+  loadProfile(receiverData.lastProfile, false);
+
+  prefs.end();**/
+
+  // General settings
+  receiverSettings.maxRange = 60;
+  receiverSettings.batteryCells = 12;
+  receiverSettings.batteryType = 0;
+  receiverSettings.motorPoles = 14;
+  receiverSettings.wheelDiameter = 97;
+  receiverSettings.wheelPulley = 36;
+  receiverSettings.motorPulley = 14;
+  receiverSettings.vescCount = 1;
+  receiverSettings.vescMode = UART_ONLY;
+
+  // Estop settings
+  receiverSettings.estopMax = 100;
+  receiverSettings.estopTime = 15;
+  receiverSettings.estopRelease = 5;
+  receiverSettings.estopInterval = 0.1;
+
+  vesc_profile[0].maxSpeed = 40;
+  vesc_profile[0].motor_current_max = 60.0;
+  vesc_profile[0].motor_current_brake = 60.0;
+  vesc_profile[0].battery_current_max = 50.0;
+  vesc_profile[0].battery_current_max_regen = 20.0;
+  vesc_profile[0].battery_voltage_cutoff_start = 3.2;
+  vesc_profile[0].battery_voltage_cutoff_end = 3.0;
+  vesc_profile[0].abs_max_erpm = 50000.0;
+  vesc_profile[0].abs_max_erpm_reverse = 50000.0;
+
+  setBoardConfig();
 }
 
-void loadEEPROMSettings()
+void loadProfile(uint8_t profile, bool openprefs)
 {
-  bool rewriteSettings = false;
+  if (openprefs)
+    prefs.begin("FFNRS");
 
-  // Load settings from EEPROM to custom struct
-//  EEPROM.get(0, rxSettings);
+  switch (profile)
+  {
 
-  // Loop through all settings to check if everything is fine
-  // for ( int i = 0; i < numOfSettings; i++ ) {
-  //   int val = getSettingValue(i);
-  //
-  //   // If setting default value is -1, don't check if its valid
-  //   if ( settingRules[i][0] != -1 )
-  //   {
-  //     if ( !inRange( val, settingRules[i][1], settingRules[i][2] ) )
-  //     {
-  //       // Setting is damaged or never written. Rewrite default.
-  //       rewriteSettings = true;
-  //       setSettingValue(i, settingRules[i][0] );
-  //     }
-  //   }
+  case 0:
+    vesc_profile[0].maxSpeed = prefs.getUChar("P1MAXSPEED", 30);
+    vesc_profile[0].motor_current_max = prefs.getFloat("P1MOTORMAX", 40);
+    vesc_profile[0].motor_current_brake = prefs.getFloat("P1MOTORBRAKE", 40);
+    vesc_profile[0].battery_current_max = prefs.getFloat("P1BATTMAX", 20);
+    vesc_profile[0].battery_current_max_regen = prefs.getFloat("P1BATTREGEN", 5);
+    vesc_profile[0].battery_voltage_cutoff_start = prefs.getFloat("P1BATTCUTST", 3.2);
+    vesc_profile[0].battery_voltage_cutoff_end = prefs.getFloat("P1BATTCUTEND", 3);
+    vesc_profile[0].abs_max_erpm = prefs.getFloat("P1ABSMAXERPM", 50000);
+    vesc_profile[0].abs_max_erpm_reverse = prefs.getFloat("P1ABSMAXERPMR", 50000);
+    break;
 
-  // }
+  case 1:
+    vesc_profile[1].maxSpeed = prefs.getUChar("P2MAXSPEED", 30);
+    vesc_profile[1].motor_current_max = prefs.getFloat("P2MOTORMAX", 40);
+    vesc_profile[1].motor_current_brake = prefs.getFloat("P2MOTORBRAKE", 40);
+    vesc_profile[1].battery_current_max = prefs.getFloat("P2BATTMAX", 20);
+    vesc_profile[1].battery_current_max_regen = prefs.getFloat("P2BATTREGEN", 5);
+    vesc_profile[1].battery_voltage_cutoff_start = prefs.getFloat("P2BATTCUTST", 3.2);
+    vesc_profile[1].battery_voltage_cutoff_end = prefs.getFloat("P2BATTCUTEND", 3);
+    vesc_profile[1].abs_max_erpm = prefs.getFloat("P2ABSMAXERPM", 50000);
+    vesc_profile[1].abs_max_erpm_reverse = prefs.getFloat("P2ABSMAXERPMR", 50000);
+    break;
 
-  // if (rxSettings.firmVersion != VERSION){
-  //
-  //   setDefaultEEPROMSettings();
-  //
-  // }
-  // else if (rewriteSettings == true)
-  // {
-  //   updateEEPROMSettings();
-  // }
-  //
-  // debug("Settings loaded");
+  case 2:
+    vesc_profile[2].maxSpeed = prefs.getUChar("P3MAXSPEED", 30);
+    vesc_profile[2].motor_current_max = prefs.getFloat("P3MOTORMAX", 40);
+    vesc_profile[2].motor_current_brake = prefs.getFloat("P3MOTORBRAKE", 40);
+    vesc_profile[2].battery_current_max = prefs.getFloat("P3BATTMAX", 20);
+    vesc_profile[2].battery_current_max_regen = prefs.getFloat("P3BATTREGEN", 5);
+    vesc_profile[2].battery_voltage_cutoff_start = prefs.getFloat("P3BATTCUTST", 3.2);
+    vesc_profile[2].battery_voltage_cutoff_end = prefs.getFloat("P3BATTCUTEND", 3);
+    vesc_profile[2].abs_max_erpm = prefs.getFloat("P3ABSMAXERPM", 50000);
+    vesc_profile[2].abs_max_erpm_reverse = prefs.getFloat("P3ABSMAXERPMR", 50000);
+    break;
+
+  case 3:
+    vesc_profile[3].maxSpeed = prefs.getUChar("P4MAXSPEED", 30);
+    vesc_profile[3].motor_current_max = prefs.getFloat("P4MOTORMAX", 40);
+    vesc_profile[3].motor_current_brake = prefs.getFloat("P4MOTORBRAKE", 40);
+    vesc_profile[3].battery_current_max = prefs.getFloat("P4BATTMAX", 20);
+    vesc_profile[3].battery_current_max_regen = prefs.getFloat("P4BATTREGEN", 5);
+    vesc_profile[3].battery_voltage_cutoff_start = prefs.getFloat("P4BATTCUTST", 3.2);
+    vesc_profile[3].battery_voltage_cutoff_end = prefs.getFloat("P4BATTCUTEND", 3);
+    vesc_profile[3].abs_max_erpm = prefs.getFloat("P4ABSMAXERPM", 50000);
+    vesc_profile[3].abs_max_erpm_reverse = prefs.getFloat("P4ABSMAXERPMR", 50000);
+    break;
+
+  case 4:
+    vesc_profile[4].maxSpeed = prefs.getUChar("P5MAXSPEED", 30);
+    vesc_profile[4].motor_current_max = prefs.getFloat("P5MOTORMAX", 40);
+    vesc_profile[4].motor_current_brake = prefs.getFloat("P5MOTORBRAKE", 40);
+    vesc_profile[4].battery_current_max = prefs.getFloat("P5BATTMAX", 20);
+    vesc_profile[4].battery_current_max_regen = prefs.getFloat("P5BATTREGEN", 5);
+    vesc_profile[4].battery_voltage_cutoff_start = prefs.getFloat("P5BATTCUTST", 3.2);
+    vesc_profile[4].battery_voltage_cutoff_end = prefs.getFloat("P5BATTCUTEND", 3);
+    vesc_profile[4].abs_max_erpm = prefs.getFloat("P5ABSMAXERPM", 50000);
+    vesc_profile[4].abs_max_erpm_reverse = prefs.getFloat("P5ABSMAXERPMR", 50000);
+    break;
+
+    if (openprefs)
+      prefs.end();
+  }
 }
 
-// Write settings to the EEPROM
-void updateEEPROMSettings()
+void setBoardConfig()
 {
-//  EEPROM.put(0, rxSettings);
-}
-
-// Set a value of a specific setting by index.
-void setSettingValue(int index, uint64_t value)
-{
-  // switch (index) {
-  //   case 0: rxSettings.triggerMode = value; break;
-  //   case 1: rxSettings.controlMode = value; break;
-  //   case 2: rxSettings.address = value;     break;
-  //
-  //   default: /* Do nothing */ break;
-  // }
-}
-
-// Get settings value by index (usefull when iterating through settings).
-int getSettingValue(uint8_t index)
-{
-  // int value;
-  // switch (index) {
-  //   case 0: value = rxSettings.triggerMode; break;
-  //   case 1: value = rxSettings.controlMode; break;
-  //
-  //   default: return -1;
-  // }
-  // return value;
+  boardConfig.maxSpeed = vesc_profile[receiverData.lastProfile].maxSpeed;
+  boardConfig.maxRange = receiverSettings.maxRange;
+  boardConfig.batteryCells = receiverSettings.batteryCells;
+  boardConfig.batteryType = receiverSettings.batteryType;
+  boardConfig.setMotorCurrentMax(vesc_profile[receiverData.lastProfile].motor_current_max);
+  boardConfig.setMotorCurrentBrake(vesc_profile[receiverData.lastProfile].motor_current_brake);
+  boardConfig.setBatteryCurrentMax(vesc_profile[receiverData.lastProfile].battery_current_max);
+  boardConfig.setBatteryCurrentMaxRegen(vesc_profile[receiverData.lastProfile].battery_current_max_regen);
 }
 
 bool inRange(int val, int minimum, int maximum)
@@ -1226,6 +1477,11 @@ bool inRange(int val, int minimum, int maximum)
   return ((minimum <= val) && (val <= maximum));
 }
 
-void debug(String x) {
+void debug(String x)
+{
   Serial.println(x);
+}
+
+void shutdownBoard() {
+  digitalWrite(AS_SWITCH, HIGH);
 }
