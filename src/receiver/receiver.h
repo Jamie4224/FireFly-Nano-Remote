@@ -6,6 +6,7 @@
 #include "radio.h"
 #include "utils.h"
 #include "VescUart.h"
+#include <Preferences.h>
 
 #ifdef RECEIVER_SCREEN
   #include <Adafruit_GFX.h>
@@ -21,6 +22,8 @@
   // Wifi
 #endif
 
+Preferences prefs;
+
 // Data structures
 ReceiverPacket recvPacket;
 RemotePacket remPacket;
@@ -34,11 +37,12 @@ AppState state = IDLE;
 uint32_t boardID;
 
 // send configuration on power on
-bool justStarted = true;
+bool sendConfig = true;
 
 // send only updated telemetry
 bool telemetryUpdated = false;
 unsigned long telemetryTime = 0;
+bool uartTelemetryAvailable = true;
 
 // Last time data was pulled from VESC
 unsigned long lastUartPull = 0;
@@ -73,6 +77,53 @@ String updateStatus;
 
 unsigned long lastBrakeTime;
 
+enum vesc_profiles { PROFILE_1, PROFILE_2, PROFILE_3, PROFILE_4, PROFILE_5 };
+
+
+struct VescProfile {
+    uint8_t maxSpeed;
+    float motor_current_max;
+    float motor_current_brake;
+    float battery_current_max;
+    float battery_current_max_regen;
+    float battery_voltage_cutoff_start;
+    float battery_voltage_cutoff_end;
+    float abs_max_erpm;
+    float abs_max_erpm_reverse;
+};
+
+VescProfile profile_1;
+VescProfile profile_2;
+VescProfile profile_3;
+VescProfile profile_4;
+VescProfile profile_5;
+
+VescProfile vesc_profile[5] {profile_1, profile_2, profile_3, profile_4, profile_5};
+
+struct ReceiverData {
+  uint8_t lastProfile = 0;
+} receiverData;
+
+enum VESC_MODES { UART_ONLY, UART_ADC};
+
+struct ReceiverSettings {
+  uint8_t maxRange;
+  uint8_t batteryCells;
+  uint8_t batteryType;
+  uint8_t motorPoles;
+  uint8_t wheelDiameter;
+  uint8_t wheelPulley;
+  uint8_t motorPulley;
+  uint8_t vescCount;
+  uint8_t vescMode; // 0: UART Only, 1: ADC + UART
+
+  uint8_t estopMax;
+  float estopTime;
+  uint8_t estopRelease;
+  float estopInterval;
+} receiverSettings;
+
+
 
 #ifdef RECEIVER_SCREEN
 const GFXfont* fontDigital = &Segment13pt7b;  // speed, distance, ...
@@ -93,17 +144,18 @@ void calculateRatios();
 void controlStatusLed();
 void coreTask(void * pvParameters );
 bool dataAvailable();
-int getSettingValue(uint8_t index);
 void stateMachine();
 void getUartData();
 bool inRange(int val, int minimum, int maximum);
-void loadEEPROMSettings();
 void radioExchange();
 bool receiveData();
 bool sendData(uint8_t response);
 void sendUartData();
-void setDefaultEEPROMSettings();
-void setSettingValue(int index, uint64_t value);
+void loadData();
+void loadSettings();
+void loadProfile(uint8_t profile, bool openprefs);
+void setBoardConfig();
+bool pushVescProfile(uint8_t profile);
 void setState(AppState newState);
 void setStatus(uint8_t code);
 void setThrottle(uint16_t value);
@@ -111,7 +163,8 @@ void setCruise(uint8_t speed);
 void speedControl(uint16_t throttle , bool trigger );
 String uint64ToAddress(uint64_t number);
 String uint64ToString(uint64_t number);
-void updateEEPROMSettings();
+void shutdownBoard();
+
 
 
 void updateSetting(uint8_t setting, uint64_t value);
@@ -123,3 +176,4 @@ void debug(String x);
 void SerializeInt32(char (&buf)[4], int32_t val);
 
 int32_t ParseInt32(const char (&buf)[4]);
+

@@ -17,6 +17,12 @@
 #define PIN_TRIGGER   32
 #define ADC_THROTTLE  ADC1_GPIO38_CHANNEL // ADC1_CHANNEL_2
 
+#define ADC_CRUISE    12
+#define ADC_VESC      25
+
+#define AS_SWITCH     13
+
+
 #define PIN_BATTERY   13
 
 #define HAS_BUTTON KEY_BUILTIN // button "PRG" on board
