@@ -68,7 +68,7 @@ void setup()
   }
   else if (receiverSettings.vescMode == UART_ADC)
   {
-    pinMode(ADC_VESC, OUTPUT);
+    pinMode(ADC_CRUISE, OUTPUT);
   }
 
   pinMode(AS_SWITCH, OUTPUT);
@@ -1366,7 +1366,7 @@ void loadSettings()
   receiverSettings.wheelPulley = 36;
   receiverSettings.motorPulley = 14;
   receiverSettings.vescCount = 1;
-  receiverSettings.vescMode = UART_ONLY;
+  receiverSettings.vescMode = UART_ADC;
 
   // Estop settings
   receiverSettings.estopMax = 100;
