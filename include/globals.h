@@ -11,6 +11,23 @@
 const COMM_PACKET_ID VESC_COMMAND = COMM_GET_VALUES; // VESC
 // const COMM_PACKET_ID VESC_COMMAND = COMM_GET_UNITY_VALUES; // Enertion Unity // Disabled for now
 
+
+
+// default board configuration
+const int MAX_SPEED = 38;       // KM/H
+const int MAX_RANGE = 45;       // KM
+const int BATTERY_CELLS = 10;
+const int BOARD_BATTERY_TYPE = 0;     // 0: LI-ION | 1: LIPO
+const int MOTOR_POLES = 14;
+const int WHEEL_DIAMETER = 90;
+const int WHEEL_PULLEY = 36;
+const int MOTOR_PULLEY = 15;
+
+
+
+
+
+
 /*
   Endless ride - when remote is off and speed is over 12 km/h for 3 seconds,
   cruise control will be activated when speed drops below 12 km/h.
@@ -31,36 +48,27 @@ const float CRUISE_CURRENT_LOW = 5.0;   // Amps
 const float MAX_PUSHING_SPEED = 20.0;   // km/h
 
 // Auto stop (in seconds)
-const float AUTO_BRAKE_TIME = 10.0;    // time to apply the full brakes
+const float AUTO_BRAKE_TIME = 15.0;    // time to apply the full brakes
 const int AUTO_BRAKE_RELEASE = 5;     // time to release brakes after the full stop
 
 // UART
 const int UART_SPEED = 115200;
-const uint16_t uartPullInterval = 150;
+const uint16_t uartPullInterval = 200;
 const int UART_TIMEOUT = 10; // 10ms for 115200 bauds, 100ms for 9600 bauds
 const int REMOTE_RX_TIMEOUT = 20; // ms
+
+
+
+// REMOTE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 const int REMOTE_LOCK_TIMEOUT = 5; // seconds to lock throttle when idle
 const int REMOTE_SLEEP_TIMEOUT = 180; // seconds to go to sleep mode
 
 // turn off display if battery < 15%
-const int DISPLAY_BATTERY_MIN = 0;
+const int DISPLAY_BATTERY_MIN = 15;
 
-// VESC current, for graphs only
-const int MOTOR_MIN = -50;
-const int MOTOR_MAX = 55;
-const int BATTERY_MIN = -50;
-const int BATTERY_MAX = 55;
 
-// default board configuration
-const int MAX_SPEED = 38;       // KM/H
-const int MAX_RANGE = 45;       // KM
-const int BATTERY_CELLS = 10;
-const int BOARD_BATTERY_TYPE = 0;     // 0: LI-ION | 1: LIPO
-const int MOTOR_POLES = 14;
-const int WHEEL_DIAMETER = 90;
-const int WHEEL_PULLEY = 36;
-const int MOTOR_PULLEY = 15;
 
 #define VERSION 2
 
@@ -81,6 +89,10 @@ const uint8_t SET_CRUISE    = 2;
 
 const uint8_t GET_CONFIG    = 3;
 const uint8_t SET_STATE     = 4;
+const uint8_t SET_PROFILE     = 5;
+const uint8_t SET_MODE     = 6;
+const uint8_t SET_BOARD_SHUTDOWN = 7;
+
 
 
 // state machine
@@ -106,7 +118,12 @@ struct ReceiverPacket {
   uint8_t type;
   uint8_t chain;	// CRC from RemotePacket
   uint8_t state;   // Mode: Pairing, BT, ...
+  uint8_t profile;
+
+  uint8_t mode;
+  uint8_t r1;
   uint8_t r2;
+  uint8_t r3;
 };
 
 // responses type
@@ -127,8 +144,6 @@ struct InfoPacket {
   uint16_t r3;
   uint16_t r4;
   // --------------
-  uint16_t r5;
-  uint16_t r6;
 };
 
 const int PACKET_SIZE = sizeof(InfoPacket);
@@ -148,8 +163,6 @@ struct TelemetryPacket {
   int16_t motorCurrent; // motor amps * 100
   int16_t inputCurrent; // battery amps * 100
   // -----------------
-  int16_t r9;
-  int16_t r10;
 
   uint16_t f2w(float f) { return f * 100; } // pack float
   float w2f(uint16_t w) { return float(w) / 100; }; // unpack float
@@ -176,27 +189,35 @@ struct TelemetryPacket {
 // board setting
 struct ConfigPacket {
   ReceiverPacket header;
+  // TODO: IS THIS NECESSARY?
   // -------------------  // keep 4 byte alignment!
   uint8_t  maxSpeed;	    // m/s
   uint8_t  maxRange;      // km
   uint8_t  batteryCells;
   uint8_t  batteryType;   // 0: Li-ion | 1: LiPo
   // -------------------
-  uint8_t  motorPoles;
-  uint8_t  wheelDiameter;
-  uint8_t  wheelPulley;
-  uint8_t  motorPulley;
+  uint8_t  motor_current_max;
+  uint8_t  motor_current_brake;
+  uint8_t  battery_current_max;
+  uint8_t  battery_current_max_regen;
   // -------------------
   int16_t r1;  // battery amps * 100
   int16_t r2;
   // -------------------
-  uint32_t nameProfile1;
-  //uint8_t nameProfile2;
-  //uint8_t nameProfile3;
-  //uint8_t nameProfile4;
-
   float getMaxSpeed() { return (maxSpeed) / 100; }
   void setMaxSpeed(float f) { maxSpeed = f * 100; }
+
+  float getMotorCurrentMax() { return (motor_current_max) / 100; }
+  void setMotorCurrentMax(float f) { motor_current_max = f * 100; }
+
+  float getMotorCurrentBrake() { return (motor_current_brake) / 100; }
+  void setMotorCurrentBrake(float f) { motor_current_brake = f * 100; }
+
+  float getBatteryCurrentMax() { return (battery_current_max) / 100; }
+  void setBatteryCurrentMax(float f) { battery_current_max = f * 100; }
+
+  float getBatteryCurrentMaxRegen() { return (battery_current_max_regen) / 100; }
+  void setBatteryCurrentMaxRegen(float f) { battery_current_max_regen = f * 100; }
 };
 
 const int default_throttle = 127;
