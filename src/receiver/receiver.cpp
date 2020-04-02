@@ -934,7 +934,7 @@ void stateMachine()
     // timeout handling
     connectionCheck();
 
-    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE)
+    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE || secondsSince(cruiseControlStart) > AUTO_CRUISE_TIME)
     {
       setState(COASTING);
       return;
@@ -945,7 +945,7 @@ void stateMachine()
       setState(CONNECTED);
       return;
     }
-
+    
     autoCruise();
 
     // OLD ENDLESS CODE

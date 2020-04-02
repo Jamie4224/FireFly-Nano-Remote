@@ -35,17 +35,19 @@ const int MOTOR_PULLEY = 15;
   Slide the board backwards while standing on it or foot brake
   to produce a spike in the current and stop the board.
 */
+/*
 const bool  AUTO_CRUISE_ON = false;     // disabled by default
 const float PUSHING_SPEED = 12.0;       // km/h
 const float PUSHING_TIME = 3.0;         // seconds
 const float CRUISE_CURRENT_SPIKE = 5.0; // Amps
+**/
 
 // boad will stop after 30s if current is low
-const float AUTO_CRUISE_TIME = 30.0;    // seconds
+const float AUTO_CRUISE_TIME = 10.0;    // seconds
 const float CRUISE_CURRENT_LOW = 5.0;   // Amps
 
 // auto stop if remote is off and speed is over 20 km/h
-const float MAX_PUSHING_SPEED = 20.0;   // km/h
+const float MAX_PUSHING_SPEED = 23.0;   // km/h
 
 // Auto stop (in seconds)
 const float AUTO_BRAKE_TIME = 15.0;    // time to apply the full brakes
@@ -66,7 +68,7 @@ const int REMOTE_LOCK_TIMEOUT = 5; // seconds to lock throttle when idle
 const int REMOTE_SLEEP_TIMEOUT = 180; // seconds to go to sleep mode
 
 // turn off display if battery < 15%
-const int DISPLAY_BATTERY_MIN = 15;
+const int DISPLAY_BATTERY_MIN = 15 ;
 
 
 
