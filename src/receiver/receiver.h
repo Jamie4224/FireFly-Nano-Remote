@@ -184,3 +184,4 @@ int32_t ParseInt32(const char (&buf)[4]);
 void connectionCheck();
 void autoCruise();
 void keepConnection();
+void setControlMode(uint8_t controlMode);
