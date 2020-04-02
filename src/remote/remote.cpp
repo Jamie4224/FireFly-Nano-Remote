@@ -222,7 +222,7 @@ void calculateThrottle() {
     throttle = position;
 
     // activate cruise mode?
-    if (triggerActive() && throttle == default_throttle && speed() > 3) {
+    if (triggerActive() && throttle == default_throttle && speed() > 3 && recvPacket.controlMode == CM_NORMAL) {
       cruiseSpeed = speed();
       // cruiseThrottle = throttle;
       state = CRUISE;
@@ -827,7 +827,7 @@ void prepatePacket() {
 
   case CRUISE: // Set cruise mode
     remPacket.command = SET_CRUISE;
-    remPacket.data = round(cruiseSpeed);
+    remPacket.data = round(throttle);
     break;
 
   case CONNECTING:
@@ -840,8 +840,19 @@ void prepatePacket() {
 
   case IDLE:
   case NORMAL: // Send throttle to the receiver.
-    remPacket.command = SET_THROTTLE;
-    remPacket.data = round(throttle);
+    if(recvPacket.controlMode == CM_NORMAL) {  
+      remPacket.command = SET_THROTTLE;
+      remPacket.data = round(throttle);
+    } else if(recvPacket.controlMode == CM_PUSH_ASSIST) {
+      if(triggerActive()) {
+        remPacket.command = SET_CRUISE;
+      } else {
+        remPacket.command = SET_THROTTLE;
+      }
+
+      remPacket.data = round(throttle);
+    }
+
     break;
 
   case MENU:
@@ -1623,11 +1634,15 @@ void drawSettingsMenu() {
               break;
           }
           break;
-        case MENU_MODE:
-          break;
         case MENU_PROFILE:
           altCmd.needed = true;
           altCmd.command = SET_PROFILE;
+          altCmd.data = subMenuItem;
+          backToMainMenu();
+          break;
+        case MENU_MODE:
+          altCmd.needed = true;
+          altCmd.command = SET_MODE;
           altCmd.data = subMenuItem;
           backToMainMenu();
           break;
@@ -2022,7 +2037,7 @@ void drawModeProfile() {
 
   String m = "?";
 
-  switch (recvPacket.mode) {
+  switch (recvPacket.controlMode) {
 
   case 0:
     m = "N";
