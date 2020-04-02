@@ -179,7 +179,7 @@ String MENUS[mainMenus][subMenus] = {
     { "Info", "Odometer", "Telemetry", "Debug", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
     { "Remote", "Deselect", "Calibrate", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""},
     { "Board", "Turn off", "Info",  "Update", "WiFi On", "WiFi Off", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
-    { "Mode", "Normal",  "Push Assist", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
+    { "Mode", "Normal",  "Push", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" },
     { "Profile", "Profile 1",  "Profile 2", "Profile 3", "Profile 4", "Profile 5", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" }
   };
 
