@@ -746,10 +746,8 @@ void radioExchange()
       case SET_THROTTLE:
       case SET_CRUISE:
         //setState(CONNECTED); // keep connection
-        if (state != PUSHING && state != COASTING && state != ENDLESS && state != STOPPING)
-        {
-          setState(CONNECTED);
-        }
+        if (receiverData.state != PUSHING && receiverData.state != COASTING && receiverData.state != ENDLESS && receiverData.state != STOPPING)
+              setState(CONNECTED);
 
         keepConnection();
         if (telemetryUpdated)
@@ -851,6 +849,9 @@ void radioExchange()
           throttle = remPacket.data;
           if (remPacket.data > 127)
             throttle = default_throttle;
+
+          if(throttle < 127)
+            setThrottle(throttle);
         }
         break;
       }
@@ -901,12 +902,15 @@ void stateMachine()
       return;
     }
 
-    if (telemetry.getSpeed() >= PUSHING_SPEED)
+    if (telemetry.getSpeed() > PUSHING_SPEED)
     {
-      if (secondsSince(timeSpeedReached) > PUSHING_TIME)
+      if (secondsSince(timeSpeedReached) > PUSHING_TIME) {
         setState(ENDLESS); // start cruise control
+        
+      }
+        
     }
-    else
+    else if(telemetry.getSpeed() < PUSHING_SPEED)
     {
       setState(CONNECTED);
     }
@@ -934,15 +938,9 @@ void stateMachine()
     // timeout handling
     connectionCheck();
 
-    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE || secondsSince(cruiseControlStart) > AUTO_CRUISE_TIME)
+    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE || secondsSince(cruiseControlStart) > AUTO_CRUISE_TIME || throttle != default_throttle)
     {
       setState(COASTING);
-      return;
-    }
-
-    if (throttle != default_throttle)
-    {
-      setState(CONNECTED);
       return;
     }
     
@@ -994,7 +992,7 @@ void stateMachine()
     // timeout handling
     connectionCheck();
 
-    if (receiverData.controlMode == CM_PUSH_ASSIST && telemetry.getSpeed() >= PUSHING_SPEED && remPacket.command == SET_CRUISE)
+    if (receiverData.controlMode == CM_PUSH_ASSIST && telemetry.getSpeed() > PUSHING_SPEED && remPacket.command == SET_CRUISE && throttle == default_throttle)
     {
       setState(PUSHING);
     }
@@ -1608,10 +1606,8 @@ void connectionCheck()
     {
     case PUSHING:
     case ENDLESS:
-      setState(IDLE);
-      break;
-
     case COASTING:
+      setState(IDLE);
       break;
 
     default:
