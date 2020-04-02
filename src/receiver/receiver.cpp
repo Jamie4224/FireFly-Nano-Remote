@@ -180,7 +180,7 @@ bool prepareUpdate()
   if (isMoving())
     return false;
 
-  state = UPDATE;
+  setState(UPDATE);
 
   // replace this with your WiFi network credentials
   const char *ssid = WIFI_SSID;         // e.g. "FBI Surveillance Van #34";
@@ -281,7 +281,7 @@ void drawStringCentered(String string, int x, int y, const GFXfont *font)
 
 String getState()
 {
-  switch (state)
+  switch (receiverData.state)
   {
   case IDLE:
     return "Idle";
@@ -305,7 +305,7 @@ void updateScreen()
 
   display.clearDisplay();
 
-  switch (state)
+  switch (receiverData.state)
   {
 
   case IDLE:
@@ -429,7 +429,7 @@ void loop()
   radioExchange();
   stateMachine();
 #elif RECEIVER_SCREEN
-  if (state == UPDATE)
+  if (receiverData.state == UPDATE)
   {
     ArduinoOTA.handle();
   }
@@ -590,15 +590,19 @@ bool sendData(uint8_t response)
   case ACK_ONLY: // no extra data to send
     telemetry.header.type = response;
     telemetry.header.chain = remPacket.counter;
-    telemetry.header.state = state;
+    telemetry.header.state = receiverData.state;
     telemetry.header.profile = receiverData.lastProfile;
+
+    telemetry.header.controlMode = receiverData.controlMode;
     return sendPacket(&telemetry, sizeof(telemetry));
 
   case TELEMETRY:
     telemetry.header.type = response;
     telemetry.header.chain = remPacket.counter;
-    telemetry.header.state = state;
+    telemetry.header.state = receiverData.state;
     telemetry.header.profile = receiverData.lastProfile;
+
+    telemetry.header.controlMode = receiverData.controlMode;
 
     if (sendPacket(&telemetry, sizeof(telemetry)))
     {
@@ -670,22 +674,26 @@ void setState(AppState newState)
     break;
 
   case CONNECTED:
-    switch (state)
+    switch (receiverData.state)
     {
     case UPDATE:
       return;
 
-    case PUSHING: // monitor data
+      // monitor data
     case STOPPING:
-    case ENDLESS:
-    case COASTING:
       if (remPacket.data == default_throttle)
         return;
       break;
+    case PUSHING:
+    case ENDLESS:
+    case COASTING:
+      //if (remPacket.data == default_throttle) return; // Old code, would have only allowed remote to have impact upon acceleration/brake
+
+      break;
     }
     // prevent auto-stop
-    timeoutTimer = millis();
-    connected = true;
+    //timeoutTimer = millis();
+    //connected = true;
     break;
 
   case STOPPING:
@@ -702,13 +710,13 @@ void setState(AppState newState)
 
   // apply state
   //debug(newState);
-  state = newState;
+  receiverData.state = newState;
 }
 
 void radioExchange()
 {
 
-  if (state == UPDATE)
+  if (receiverData.state == UPDATE)
   {
     receivedData = false;
     return;
@@ -737,7 +745,13 @@ void radioExchange()
       {
       case SET_THROTTLE:
       case SET_CRUISE:
-        setState(CONNECTED); // keep connection
+        //setState(CONNECTED); // keep connection
+        if (state != PUSHING && state != COASTING && state != ENDLESS && state != STOPPING)
+        {
+          setState(CONNECTED);
+        }
+
+        keepConnection();
         if (telemetryUpdated)
         {
           response = TELEMETRY;
@@ -748,26 +762,30 @@ void radioExchange()
         switch (remPacket.data)
         {
         case UPDATE:
-          prepareUpdate();
+          if (!isMoving())
+            prepareUpdate();
           break;
         case PAIRING:
-          if (state != UPDATE)
+          if (receiverData.state != UPDATE)
           {
             pairingRequest();
           }
           // request confirmed?
-          if (state == PAIRING)
+          if (receiverData.state == PAIRING)
             response = BOARD_ID;
           break;
         }
         break;
       case SET_MODE:
+        if (!isMoving())
+          setControlMode(remPacket.data);
         break;
       case SET_PROFILE:
         //pushVescProfile(remPacket.data);
         break;
       case SET_BOARD_SHUTDOWN:
-        shutdownBoard();
+        if (!isMoving())
+          shutdownBoard();
         break;
       case GET_CONFIG:
         response = CONFIG;
@@ -794,14 +812,46 @@ void radioExchange()
       {
       case SET_THROTTLE: // control VESC speed
         // ignore during auto-stop/update/...
-        if (state == CONNECTED)
+        if (receiverData.state == CONNECTED && receiverData.controlMode == CM_NORMAL)
         {
           setThrottle(remPacket.data);
+        }
+        else if (receiverData.controlMode == CM_PUSH_ASSIST)
+        {
+          throttle = remPacket.data;
+          if (remPacket.data > 127)
+            throttle = default_throttle;
+
+          switch (receiverData.state)
+          {
+          case CONNECTED:
+            setThrottle(throttle);
+            break;
+
+          case PUSHING:
+          case ENDLESS:
+          case COASTING:
+            if (throttle < 127)
+              setState(CONNECTED);
+            break;
+
+          default:
+            break;
+          }
         }
         break;
 
       case SET_CRUISE:
-        setCruise(remPacket.data);
+        if (receiverData.controlMode == CM_NORMAL)
+        {
+          setCruise();
+        }
+        else if (receiverData.controlMode == CM_PUSH_ASSIST)
+        {
+          throttle = remPacket.data;
+          if (remPacket.data > 127)
+            throttle = default_throttle;
+        }
         break;
       }
     }
@@ -811,32 +861,58 @@ void radioExchange()
   /* End listen for transmission */
 }
 
-void autoCruise(uint8_t speed)
+void autoCruise()
 {
 
   if (millisSince(lastCruiseControl) > 50)
   {
     lastCruiseControl = millis();
 
-    setCruise(speed);
+    setCruise();
   }
 }
 
 void stateMachine()
 { // handle auto-stop, endless mode, etc...
 
-  switch (state)
+  switch (receiverData.state)
   {
 
   case IDLE: // no remote connected
 
     setThrottle(default_throttle);
-    if (telemetry.getSpeed() >= PUSHING_SPEED)
-      setState(PUSHING);
     break;
 
-  case PUSHING: // pushing with no remote connected
+  case PUSHING: // pushing with remote connected
+    // timeout handling
+    connectionCheck();
 
+    setThrottle(default_throttle);
+
+    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE || throttle != default_throttle)
+    {
+      setState(CONNECTED);
+      return;
+    }
+
+    if (telemetry.getSpeed() >= MAX_PUSHING_SPEED)
+    { // downhill
+      setState(STOPPING);
+      return;
+    }
+
+    if (telemetry.getSpeed() >= PUSHING_SPEED)
+    {
+      if (secondsSince(timeSpeedReached) > PUSHING_TIME)
+        setState(ENDLESS); // start cruise control
+    }
+    else
+    {
+      setState(CONNECTED);
+    }
+
+    // OLD ENDLESS CODE
+    /*
     if (telemetry.getSpeed() < PUSHING_SPEED)
     { // pushing ended
       if (AUTO_CRUISE_ON)
@@ -851,13 +927,30 @@ void stateMachine()
     { // downhill
       setState(STOPPING);
     }
+    **/
     break;
 
   case ENDLESS: // cruise without remote at ~12 km/h / 7 mph
+    // timeout handling
+    connectionCheck();
 
-    autoCruise(PUSHING_SPEED);
+    if (receiverData.controlMode != CM_PUSH_ASSIST || remPacket.command != SET_CRUISE)
+    {
+      setState(COASTING);
+      return;
+    }
 
+    if (throttle != default_throttle)
+    {
+      setState(CONNECTED);
+      return;
+    }
+
+    autoCruise();
+
+    // OLD ENDLESS CODE
     // detect a foot brake /
+    /**
     if (true)
     {
       double current = telemetry.getMotorCurrent(); // ~2 amps
@@ -879,35 +972,36 @@ void stateMachine()
 
       motorCurrent.add(current);
     }
+    **/
     break;
 
   case COASTING: // waiting for board to slowdown
+    // timeout handling
+    connectionCheck();
+
+    if (throttle != default_throttle) {
+        setState(CONNECTED);
+        return;
+    }
 
     setThrottle(default_throttle);
     // avoid ENDLESS > IDLE > PUSHING loop
     if (telemetry.getSpeed() < PUSHING_SPEED)
-      setState(IDLE);
+      setState(CONNECTED);
     break;
 
   case CONNECTED: // remote is connected
-
     // timeout handling
-    if (millisSince(timeoutTimer) > timeoutMax)
+    connectionCheck();
+
+    if (receiverData.controlMode == CM_PUSH_ASSIST && telemetry.getSpeed() >= PUSHING_SPEED && remPacket.command == SET_CRUISE)
     {
-      debug("receiver timeout");
-
-      // No speed is received within the timeout limit.
-      connected = false;
-      timeoutTimer = millis();
-
-      setState(STOPPING);
-
-      // use last throttle
-      throttle = lastThrottle;
+      setState(PUSHING);
     }
+
     break;
 
-  case STOPPING: // emergency brake when remote has disconnected
+  case STOPPING: // emergency brake when remote has
 
     // start braking from zero throttle
     if (throttle > default_throttle)
@@ -1066,7 +1160,7 @@ void setThrottle(uint16_t value)
   lastThrottle = throttle;
 }
 
-void setCruise(uint8_t speed)
+void setCruise()
 {
 
 // UART
@@ -1077,6 +1171,9 @@ void setCruise(uint8_t speed)
     UART.nunchuck.lowerButton = true;
     UART.setNunchuckValues();
     **/
+
+  //throttle = default_throttle;
+
   if (receiverSettings.vescMode == UART_ONLY)
   {
     chuckPackage.valYJoy = 127;
@@ -1319,11 +1416,21 @@ bool pushVescProfile(uint8_t profile)
   return true;
 }
 
+void setControlMode(uint8_t controlMode)
+{
+  receiverData.controlMode = controlMode;
+
+  prefs.begin("FFNRD");
+  prefs.putUChar("lastControlMode", controlMode);
+  prefs.end();
+}
+
 void loadData()
 {
   prefs.begin("FFNRD");
 
   receiverData.lastProfile = prefs.getUChar("lastProfile", 0);
+  receiverData.controlMode = prefs.getUChar("lastControlMode", 0);
 
   prefs.end();
 }
@@ -1482,6 +1589,43 @@ void debug(String x)
   Serial.println(x);
 }
 
-void shutdownBoard() {
+void shutdownBoard()
+{
   digitalWrite(AS_SWITCH, HIGH);
+}
+
+void connectionCheck()
+{
+  if (millisSince(timeoutTimer) > timeoutMax)
+  {
+    debug("receiver timeout");
+
+    // No speed is received within the timeout limit.
+    connected = false;
+    timeoutTimer = millis();
+
+    switch (receiverData.state)
+    {
+    case PUSHING:
+    case ENDLESS:
+      setState(IDLE);
+      break;
+
+    case COASTING:
+      break;
+
+    default:
+      setState(STOPPING);
+      break;
+    }
+
+    // use last throttle
+    throttle = lastThrottle;
+  }
+}
+
+void keepConnection()
+{
+  timeoutTimer = millis();
+  connected = true;
 }

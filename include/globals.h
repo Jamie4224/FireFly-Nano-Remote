@@ -113,6 +113,8 @@ enum AppState {
   COASTING    // waiting for board to slowdown
 };
 
+enum ControlMode { CM_NORMAL, CM_PUSH_ASSIST};
+
 // Receiver > remote  3 bytes
 struct ReceiverPacket {
   uint8_t type;
@@ -120,7 +122,7 @@ struct ReceiverPacket {
   uint8_t state;   // Mode: Pairing, BT, ...
   uint8_t profile;
 
-  uint8_t mode;
+  uint8_t controlMode;
   uint8_t r1;
   uint8_t r2;
   uint8_t r3;
